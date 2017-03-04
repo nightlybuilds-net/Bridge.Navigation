@@ -40,7 +40,6 @@
     <Compile Include="Abstraction\INavigator.cs" />
     <Compile Include="Abstraction\INavigatorConfigurator.cs" />
     <Compile Include="Abstraction\IPageDescriptor.cs" />
-    <Compile Include="App.cs" />
     <Compile Include="Impl\BridgeNavigator.cs" />
     <Compile Include="Impl\BridgeNavigatorConfigBase.cs" />
     <Compile Include="Impl\PageDescriptor.cs" />
