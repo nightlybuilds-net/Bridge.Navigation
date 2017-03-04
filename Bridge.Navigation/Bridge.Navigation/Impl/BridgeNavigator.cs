@@ -1,8 +1,13 @@
 using System;
+using Bridge.jQuery2;
 using Bridge.Navigation.Abstraction;
+using Bridge.Linq;
 
-namespace Bridge.Navigation
+namespace Bridge.Navigation.Impl
 {
+    /// <summary>
+    /// INavigator implementation
+    /// </summary>
     [Reflectable]
     public class BridgeNavigator : INavigator 
     {
@@ -29,8 +34,16 @@ namespace Bridge.Navigation
 
             this._configuration.Body.Load(page.HtmlLocation,null, (o,s,a) =>
             {
-                if (page.PageController == null) return;
-                page.PageController().OnLoad();
+                // todo manage error
+
+                if (page.PageController != null) 
+                    page.PageController().OnLoad();
+
+                if (page.JsDependencies != null)
+                    page.JsDependencies.ForEach(f=> 
+                    {
+                        jQuery.GetScript(f);
+                    });
             }); 
         }
 

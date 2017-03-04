@@ -23,6 +23,6 @@ namespace Bridge.Navigation.Abstraction
         /// <summary>
         /// Add Page JS dependencies.
         /// </summary>
-        IEnumerable<string> JsDependeincies { get; set; }
+        IEnumerable<string> JsDependencies { get; set; }
     }
 }

@@ -1,12 +1,16 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using Bridge.jQuery2;
 using Bridge.Navigation.Abstraction;
 
-namespace Bridge.Navigation
+namespace Bridge.Navigation.Impl
 {
+    /// <summary>
+    /// INavigatorConfigurator Implementation. Must be extended.
+    /// </summary>
     [Reflectable]
-    public abstract class NavigatorConfigBase : INavigatorConfigurator
+    public abstract class BridgeNavigatorConfigBase : INavigatorConfigurator
     {
         private readonly IList<IPageDescriptor> _routes;
 
@@ -15,7 +19,7 @@ namespace Bridge.Navigation
         public abstract string HomeId { get; }
 
 
-        protected NavigatorConfigBase()
+        protected BridgeNavigatorConfigBase()
         {
             this._routes = this.CreateRoutes();
         }
