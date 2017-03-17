@@ -1,4 +1,6 @@
-﻿namespace Bridge.Navigation.Abstraction
+﻿using System.Collections.Generic;
+
+namespace Bridge.Navigation.Abstraction
 {
     public interface INavigator
     {
@@ -12,6 +14,7 @@
         /// Navigate to a pageid
         /// </summary>
         /// <param name="pageId"></param>
-        void Navigate(string pageId);
+        /// <param name="parameters"></param>
+        void Navigate(string pageId, Dictionary<string, object> parameters = null);
     }
 }

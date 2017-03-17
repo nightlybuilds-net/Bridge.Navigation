@@ -52,10 +52,12 @@ Bridge.assembly("Bridge.Navigation", function ($asm, globals) {
          * @public
          * @this Bridge.Navigation.Impl.BridgeNavigator
          * @memberof Bridge.Navigation.Impl.BridgeNavigator
-         * @param   {string}    pageId
+         * @param   {string}                                     pageId        
+         * @param   {System.Collections.Generic.Dictionary$2}    parameters
          * @return  {void}
          */
-        navigate: function (pageId) {
+        navigate: function (pageId, parameters) {
+            if (parameters === void 0) { parameters = null; }
             var page = this._configuration.Bridge$Navigation$Abstraction$INavigatorConfigurator$getPageDescriptorByKey(pageId);
             if (page == null) {
                 throw new System.Exception(System.String.format("Page not found with ID {0}", pageId));
@@ -71,7 +73,7 @@ Bridge.assembly("Bridge.Navigation", function ($asm, globals) {
                 // todo manage error
 
                 if (!Bridge.staticEquals(page.Bridge$Navigation$Abstraction$IPageDescriptor$getPageController(), null)) {
-                    page.Bridge$Navigation$Abstraction$IPageDescriptor$getPageController()().Bridge$Navigation$Abstraction$IAmLoadable$onLoad();
+                    page.Bridge$Navigation$Abstraction$IPageDescriptor$getPageController()().Bridge$Navigation$Abstraction$IAmLoadable$onLoad(parameters);
                 }
 
                 if (page.Bridge$Navigation$Abstraction$IPageDescriptor$getJsDependencies() != null) {
@@ -169,7 +171,7 @@ Bridge.assembly("Bridge.Navigation", function ($asm, globals) {
 
     var $m = Bridge.setMetadata,
         $n = [Bridge.Navigation.Abstraction,System.Collections.Generic,Bridge.Navigation.Impl];
-    $m($n[2].BridgeNavigator, function () { return {"att":1048577,"a":2,"m":[{"a":2,"n":".ctor","t":1,"p":[$n[0].INavigatorConfigurator],"pi":[{"n":"configuration","pt":$n[0].INavigatorConfigurator,"ps":0}],"sn":"ctor"},{"a":2,"n":"InitNavigation","t":8,"sn":"initNavigation","rt":Object},{"a":2,"n":"Navigate","t":8,"pi":[{"n":"pageId","pt":String,"ps":0}],"sn":"navigate","rt":Object,"p":[String]},{"a":1,"n":"_configuration","t":4,"rt":$n[0].INavigatorConfigurator,"sn":"_configuration","ro":true}]}; });
+    $m($n[2].BridgeNavigator, function () { return {"att":1048577,"a":2,"m":[{"a":2,"n":".ctor","t":1,"p":[$n[0].INavigatorConfigurator],"pi":[{"n":"configuration","pt":$n[0].INavigatorConfigurator,"ps":0}],"sn":"ctor"},{"a":2,"n":"InitNavigation","t":8,"sn":"initNavigation","rt":Object},{"a":2,"n":"Navigate","t":8,"pi":[{"n":"pageId","pt":String,"ps":0},{"n":"parameters","dv":null,"o":true,"pt":$n[1].Dictionary$2(String,Object),"ps":1}],"sn":"navigate","rt":Object,"p":[String,$n[1].Dictionary$2(String,Object)]},{"a":1,"n":"_configuration","t":4,"rt":$n[0].INavigatorConfigurator,"sn":"_configuration","ro":true}]}; });
     $m($n[2].BridgeNavigatorConfigBase, function () { return {"att":1048705,"a":2,"m":[{"a":3,"n":".ctor","t":1,"sn":"ctor"},{"ab":true,"a":2,"n":"CreateRoutes","t":8,"sn":"createRoutes","rt":$n[1].IList$1(Bridge.Navigation.Abstraction.IPageDescriptor)},{"a":2,"n":"GetPageDescriptorByKey","t":8,"pi":[{"n":"key","pt":String,"ps":0}],"sn":"getPageDescriptorByKey","rt":$n[0].IPageDescriptor,"p":[String]},{"ab":true,"a":2,"n":"Body","t":16,"rt":$,"g":{"ab":true,"a":2,"n":"get_Body","t":8,"sn":"getBody","rt":$}},{"ab":true,"a":2,"n":"HomeId","t":16,"rt":String,"g":{"ab":true,"a":2,"n":"get_HomeId","t":8,"sn":"getHomeId","rt":String}},{"a":1,"n":"_routes","t":4,"rt":$n[1].IList$1(Bridge.Navigation.Abstraction.IPageDescriptor),"sn":"_routes","ro":true}]}; });
     $m($n[2].PageDescriptor, function () { return {"att":1048577,"a":2,"m":[{"a":2,"isSynthetic":true,"n":".ctor","t":1,"sn":"ctor"},{"a":2,"n":"HtmlLocation","t":16,"rt":String,"g":{"a":2,"n":"get_HtmlLocation","t":8,"sn":"getHtmlLocation","rt":String},"s":{"a":2,"n":"set_HtmlLocation","t":8,"pi":[{"n":"value","pt":String,"ps":0}],"sn":"setHtmlLocation","rt":Object,"p":[String]}},{"a":2,"n":"JsDependencies","t":16,"rt":$n[1].IEnumerable$1(String),"g":{"a":2,"n":"get_JsDependencies","t":8,"sn":"getJsDependencies","rt":$n[1].IEnumerable$1(String)},"s":{"a":2,"n":"set_JsDependencies","t":8,"pi":[{"n":"value","pt":$n[1].IEnumerable$1(String),"ps":0}],"sn":"setJsDependencies","rt":Object,"p":[$n[1].IEnumerable$1(String)]}},{"a":2,"n":"Key","t":16,"rt":String,"g":{"a":2,"n":"get_Key","t":8,"sn":"getKey","rt":String},"s":{"a":2,"n":"set_Key","t":8,"pi":[{"n":"value","pt":String,"ps":0}],"sn":"setKey","rt":Object,"p":[String]}},{"a":2,"n":"PageController","t":16,"rt":Function,"g":{"a":2,"n":"get_PageController","t":8,"sn":"getPageController","rt":Function},"s":{"a":2,"n":"set_PageController","t":8,"pi":[{"n":"value","pt":Function,"ps":0}],"sn":"setPageController","rt":Object,"p":[Function]}}]}; });
 });

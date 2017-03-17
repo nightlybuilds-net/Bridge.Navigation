@@ -1,4 +1,5 @@
-﻿using Bridge.jQuery2;
+﻿using System.Collections.Generic;
+using Bridge.jQuery2;
 using Bridge.Navigation.Abstraction;
 using Bridge.Utils;
 
@@ -15,7 +16,7 @@ namespace Bridge.Nav.TestApp.Controllers
             });
         }
 
-        public void OnLoad()
+        public void OnLoad(Dictionary<string, object> parameters)
         {
             Console.Log("OnLoad() on Page 1 controller");
         }

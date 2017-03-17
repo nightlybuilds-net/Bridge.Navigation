@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using Bridge.jQuery2;
 using Bridge.Navigation.Abstraction;
 using Bridge.Linq;
@@ -22,7 +23,7 @@ namespace Bridge.Navigation.Impl
         /// The ID must be registered.
         /// </summary>
         /// <param name="pageId"></param>
-        public void Navigate(string pageId)
+        public void Navigate(string pageId, Dictionary<string,object> parameters = null)
         {
             var page = this._configuration.GetPageDescriptorByKey(pageId);
             if (page == null) throw new Exception($"Page not found with ID {pageId}");
@@ -37,7 +38,7 @@ namespace Bridge.Navigation.Impl
                 // todo manage error
 
                 if (page.PageController != null) 
-                    page.PageController().OnLoad();
+                    page.PageController().OnLoad(parameters);
 
                 if (page.JsDependencies != null)
                     page.JsDependencies.ForEach(f=> 

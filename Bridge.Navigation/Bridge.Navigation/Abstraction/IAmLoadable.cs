@@ -1,3 +1,5 @@
+using System.Collections.Generic;
+
 namespace Bridge.Navigation.Abstraction
 {
     public interface IAmLoadable
@@ -5,6 +7,7 @@ namespace Bridge.Navigation.Abstraction
         /// <summary>
         /// Called when navigate to this controller
         /// </summary>
-        void OnLoad();
+        /// <param name="parameters"></param>
+        void OnLoad(Dictionary<string, object> parameters);
     }
 }
