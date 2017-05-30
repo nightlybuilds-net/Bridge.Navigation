@@ -35,18 +35,30 @@ namespace Bridge.Navigation.Impl
 
             this._configuration.Body.Load(page.HtmlLocation,null, (o,s,a) =>
             {
-                // todo manage error
-
-                if (page.PageController != null) 
-                    page.PageController().OnLoad(parameters);
-
+                // inject dependencies
                 if (page.JsDependencies != null)
-                    page.JsDependencies.ForEach(f=> 
+                    page.JsDependencies.ForEach(f =>
                     {
                         jQuery.GetScript(f);
                     });
+
+                if (page.PageController != null)
+                {
+                    // leave actual controlelr
+                    if (this.LastNavigateController != null)
+                        this.LastNavigateController.OnLeave();
+
+                    // load new controller
+                    var controller = page.PageController();
+                    controller.OnLoad(parameters);
+
+                    this.LastNavigateController = controller;
+                }
+                
             }); 
         }
+
+        public IAmLoadable LastNavigateController { get; private set; }
 
         /// <summary>
         /// Subscribe to anchors click
@@ -58,13 +70,13 @@ namespace Bridge.Navigation.Impl
             {
                 var anchor = ev.Target;
                 var href = anchor.GetAttribute("href");
-                var isMyHref = href.StartsWith("@");
+                var isMyHref = href.StartsWith("spaf:");
 
                 // if is my href
                 if (isMyHref)
                 {
                     ev.PreventDefault();
-                    var pageId = href.TrimStart('@');
+                    var pageId = href.Replace("spaf:", "");
                     this.Navigate(pageId);
                 }
                 // anchor default behaviour
