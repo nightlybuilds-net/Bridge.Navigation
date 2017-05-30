@@ -4,6 +4,8 @@ namespace Bridge.Navigation.Abstraction
 {
     public interface INavigator
     {
+        IAmLoadable LastNavigateController { get; }
+
         /// <summary>
         /// Init the navigation. THis will subscribe to all anchors click
         /// HRef anchor is @pageid
