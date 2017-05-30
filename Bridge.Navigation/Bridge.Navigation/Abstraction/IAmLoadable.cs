@@ -9,5 +9,10 @@ namespace Bridge.Navigation.Abstraction
         /// </summary>
         /// <param name="parameters"></param>
         void OnLoad(Dictionary<string, object> parameters);
+
+        /// <summary>
+        /// Called when controller is leaved for another 
+        /// </summary>
+        void OnLeave();
     }
 }
