@@ -10,8 +10,10 @@ namespace Bridge.Navigation.Impl
     /// INavigator implementation
     /// </summary>
     [Reflectable]
-    public class BridgeNavigator : INavigator 
+    public class BridgeNavigator : INavigator
     {
+        private static IAmLoadable _actualController;
+
         private readonly INavigatorConfigurator _configuration;
         public BridgeNavigator(INavigatorConfigurator configuration)
         {
@@ -52,13 +54,13 @@ namespace Bridge.Navigation.Impl
                     var controller = page.PageController();
                     controller.OnLoad(parameters);
 
-                    this.LastNavigateController = controller;
+                    _actualController = controller;
                 }
                 
             }); 
         }
 
-        public IAmLoadable LastNavigateController { get; private set; }
+        public IAmLoadable LastNavigateController => _actualController;
 
         /// <summary>
         /// Subscribe to anchors click
