@@ -20,5 +20,10 @@ namespace Bridge.Nav.TestApp.Controllers
         {
             Console.Log("OnLoad() on Page 1 controller");
         }
+
+        public void OnLeave()
+        {
+            Console.Log("Goodbye page1");
+        }
     }
 }
