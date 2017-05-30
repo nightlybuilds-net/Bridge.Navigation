@@ -11,5 +11,10 @@ namespace Bridge.Nav.TestApp.Controllers
         {
             Global.Alert("Hello from Page 2 Controller");
         }
+
+        public void OnLeave()
+        {
+            Console.Write("Goodbye page2");
+        }
     }
 }
