@@ -17,18 +17,18 @@ namespace Bridge.Nav.TestApp
                 new PageDescriptor
                 {
                     Key = "home",
-                    HtmlLocation = "home.html"
+                    HtmlLocation = ()=>"home.html"
                 },
                 new PageDescriptor
                 {
                     Key = "page1",
-                    HtmlLocation = "page1.html",
+                    HtmlLocation = ()=>"page1.html",
                     PageController = ()=> new Page1Controller(App.Nav)
                 },
                 new PageDescriptor
                 {
                     Key = "page2",
-                    HtmlLocation = "page2.html",
+                    HtmlLocation = ()=>"page2.html",
                     PageController = ()=> new Page2Controller()
 
                 },

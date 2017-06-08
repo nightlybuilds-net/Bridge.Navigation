@@ -35,7 +35,7 @@ namespace Bridge.Navigation.Impl
             if(body == null)
                 throw new Exception("Cannot find navigation body element.");
 
-            this._configuration.Body.Load(page.HtmlLocation,null, (o,s,a) =>
+            this._configuration.Body.Load(page.HtmlLocation.Invoke(),null, (o,s,a) =>
             {
                 // inject dependencies
                 if (page.JsDependencies != null)
