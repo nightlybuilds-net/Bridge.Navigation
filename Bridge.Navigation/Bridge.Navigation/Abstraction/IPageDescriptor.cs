@@ -13,7 +13,7 @@ namespace Bridge.Navigation.Abstraction
         /// <summary>
         /// Html page location
         /// </summary>
-        string HtmlLocation { get; set; }
+        Func<string> HtmlLocation { get; set; }
 
         /// <summary>
         /// Page Controller
