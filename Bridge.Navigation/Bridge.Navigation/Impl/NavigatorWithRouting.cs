@@ -6,10 +6,10 @@ using Bridge.Navigation.Abstraction;
 namespace Bridge.Navigation.Impl
 {
     [Reflectable]
-    public class NavigatorWithRouting : BridgeNavigator
+    public class BridgeNavigatorWithRouting : BridgeNavigator
     {
 
-        public NavigatorWithRouting(INavigatorConfigurator configuration) : base(configuration)
+        public BridgeNavigatorWithRouting(INavigatorConfigurator configuration) : base(configuration)
         {
             Window.OnPopState += e =>
             {
