@@ -14,10 +14,10 @@ namespace Bridge.Navigation.Impl
     {
         private static IAmLoadable _actualController;
 
-        private readonly INavigatorConfigurator _configuration;
+        protected readonly INavigatorConfigurator Configuration;
         public BridgeNavigator(INavigatorConfigurator configuration)
         {
-            _configuration = configuration;
+            Configuration = configuration;
         }
 
         /// <summary>
@@ -25,17 +25,17 @@ namespace Bridge.Navigation.Impl
         /// The ID must be registered.
         /// </summary>
         /// <param name="pageId"></param>
-        public void Navigate(string pageId, Dictionary<string,object> parameters = null)
+        public virtual void Navigate(string pageId, Dictionary<string,object> parameters = null)
         {
-            var page = this._configuration.GetPageDescriptorByKey(pageId);
+            var page = this.Configuration.GetPageDescriptorByKey(pageId);
             if (page == null) throw new Exception($"Page not found with ID {pageId}");
 
-            var body = this._configuration.Body;
+            var body = this.Configuration.Body;
 
             if(body == null)
                 throw new Exception("Cannot find navigation body element.");
 
-            this._configuration.Body.Load(page.HtmlLocation.Invoke(),null, (o,s,a) =>
+            this.Configuration.Body.Load(page.HtmlLocation.Invoke(),null, (o,s,a) =>
             {
                 // inject dependencies
                 if (page.JsDependencies != null)
@@ -65,7 +65,18 @@ namespace Bridge.Navigation.Impl
         /// <summary>
         /// Subscribe to anchors click
         /// </summary>
-        public void InitNavigation()
+        public virtual void InitNavigation()
+        {
+            this.SubscribeAnchors();
+
+            // go home
+            this.Navigate(this.Configuration.HomeId);
+        }
+
+        /// <summary>
+        /// Subscribe all anchors of spaf
+        /// </summary>
+        protected void SubscribeAnchors()
         {
             var allAnchors = jQuery.Select("a");
             allAnchors.Click(ev =>
@@ -83,9 +94,6 @@ namespace Bridge.Navigation.Impl
                 }
                 // anchor default behaviour
             });
-
-            // go home
-            this.Navigate(this._configuration.HomeId);
         }
     }
 }

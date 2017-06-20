@@ -11,5 +11,8 @@ namespace Bridge.Navigation.Impl
         public Func<string> HtmlLocation { get; set; }
         public Func<IAmLoadable> PageController { get; set; }
         public IEnumerable<string> JsDependencies { get; set; }
+
+        public Func<bool> CanBeDirectLoad { get; set; }
+       
     }
 }
