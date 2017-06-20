@@ -24,5 +24,12 @@ namespace Bridge.Navigation.Abstraction
         /// Add Page JS dependencies.
         /// </summary>
         IEnumerable<string> JsDependencies { get; set; }
+
+        /// <summary>
+        /// If null can be direct loaded
+        /// else evaluate func
+        /// </summary>
+        /// <returns></returns>
+        Func<bool> CanBeDirectLoad { get; set; }
     }
 }
