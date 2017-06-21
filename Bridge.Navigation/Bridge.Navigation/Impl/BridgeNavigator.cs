@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using Bridge.Html5;
 using Bridge.jQuery2;
 using Bridge.Navigation.Abstraction;
 using Bridge.Linq;
@@ -81,8 +82,16 @@ namespace Bridge.Navigation.Impl
             var allAnchors = jQuery.Select("a");
             allAnchors.Click(ev =>
             {
-                var anchor = ev.Target;
-                var href = anchor.GetAttribute("href");
+                var clickedElement = ev.Target;
+
+                if (clickedElement.GetType() != typeof(HTMLAnchorElement))
+                    clickedElement = jQuery.Element(ev.Target).Parents("a").Get(0);
+
+                var href = clickedElement.GetAttribute("href");
+
+                if(string.IsNullOrEmpty(href))
+                    throw new Exception("No anchor found for spaf navigator");
+
                 var isMyHref = href.StartsWith("spaf:");
 
                 // if is my href
