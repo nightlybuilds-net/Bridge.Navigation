@@ -25,10 +25,7 @@ namespace Bridge.Navigation.Impl
         public override void Navigate(string pageId, Dictionary<string, object> parameters = null)
         {
             base.Navigate(pageId, parameters);
-            Window.History.PushState(null, string.Empty,
-                parameters != null
-                    ? $"http://{Window.Location.Host}#{pageId}={Global.Btoa(JSON.Stringify(parameters))}"
-                    : $"http://{Window.Location.Host}#{pageId}");
+            NavigationUtility.PushState(pageId,parameters);
         }
 
         public override void InitNavigation()
@@ -47,7 +44,7 @@ namespace Bridge.Navigation.Impl
                 // if not null and evaluation is false fallback to home
                 if (page.CanBeDirectLoad != null && !page.CanBeDirectLoad.Invoke())
                 {
-                    Window.History.ReplaceState(null,string.Empty, $"http://{Window.Location.Host}#{this.Configuration.HomeId}");
+                    NavigationUtility.ReplaceState(this.Configuration.HomeId);
                     this.NavigateWithoutPushState(this.Configuration.HomeId);
                 }
                 else
