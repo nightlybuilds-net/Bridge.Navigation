@@ -42,8 +42,9 @@
     <Compile Include="Abstraction\IPageDescriptor.cs" />
     <Compile Include="Impl\BridgeNavigator.cs" />
     <Compile Include="Impl\BridgeNavigatorConfigBase.cs" />
-    <Compile Include="Impl\NavigatorWithRouting.cs" />
+    <Compile Include="Impl\BridgeNavigatorWithRouting.cs" />
     <Compile Include="Impl\PageDescriptor.cs" />
+    <Compile Include="NavigationUtility.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>
   <ItemGroup>
