@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
 
-namespace Bridge.Navigation.Abstraction
+namespace Bridge.Navigation
 {
     public interface IPageDescriptor
     {

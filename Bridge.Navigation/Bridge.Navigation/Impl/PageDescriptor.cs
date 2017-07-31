@@ -1,8 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
-using Bridge.Navigation.Abstraction;
 
-namespace Bridge.Navigation.Impl
+namespace Bridge.Navigation
 {
     [Reflectable]
     public class PageDescriptor : IPageDescriptor

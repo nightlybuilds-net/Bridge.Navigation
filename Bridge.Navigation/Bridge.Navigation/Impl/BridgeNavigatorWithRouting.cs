@@ -1,9 +1,8 @@
 using System;
 using System.Collections.Generic;
 using Bridge.Html5;
-using Bridge.Navigation.Abstraction;
 
-namespace Bridge.Navigation.Impl
+namespace Bridge.Navigation
 {
     [Reflectable]
     public class BridgeNavigatorWithRouting : BridgeNavigator
