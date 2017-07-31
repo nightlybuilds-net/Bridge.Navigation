@@ -7,10 +7,15 @@ namespace Bridge.Navigation
         IAmLoadable LastNavigateController { get; }
 
         /// <summary>
-        /// Init the navigation. THis will subscribe to all anchors click
-        /// HRef anchor is @pageid
+        /// Init the navigation. THis will subscribe to all anchors click too
+        /// HRef anchor is spaf:XXX
         /// </summary>
         void InitNavigation();
+
+        /// <summary>
+        /// Enable href as spaf:pageID
+        /// </summary>
+        void EnableSpafAnchors();
 
         /// <summary>
         /// Navigate to a pageid
