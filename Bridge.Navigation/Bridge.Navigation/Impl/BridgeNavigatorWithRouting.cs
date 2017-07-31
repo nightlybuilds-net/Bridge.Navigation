@@ -35,7 +35,7 @@ namespace Bridge.Navigation
                 base.InitNavigation();
             else
             {
-                base.SubscribeAnchors();
+                base.EnableSpafAnchors();
 
                 var page = this.Configuration.GetPageDescriptorByKey(parsed.PageId);
                 if (page == null) throw new Exception($"Page not found with ID {parsed.PageId}");

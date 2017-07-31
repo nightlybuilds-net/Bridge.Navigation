@@ -19,6 +19,34 @@ namespace Bridge.Navigation
             Configuration = configuration;
         }
 
+        public void EnableSpafAnchors()
+        {
+            var allAnchors = jQuery.Select("a");
+            allAnchors.Click(ev =>
+            {
+                var clickedElement = ev.Target;
+
+                if (clickedElement.GetType() != typeof(HTMLAnchorElement))
+                    clickedElement = jQuery.Element(ev.Target).Parents("a").Get(0);
+
+                var href = clickedElement.GetAttribute("href");
+
+                if (string.IsNullOrEmpty(href))
+                    throw new Exception("No anchor found for spaf navigator");
+
+                var isMyHref = href.StartsWith("spaf:");
+
+                // if is my href
+                if (isMyHref)
+                {
+                    ev.PreventDefault();
+                    var pageId = href.Replace("spaf:", "");
+                    this.Navigate(pageId);
+                }
+                // anchor default behaviour
+            });
+        }
+
         /// <summary>
         /// Navigate to a page ID.
         /// The ID must be registered.
@@ -69,41 +97,12 @@ namespace Bridge.Navigation
         /// </summary>
         public virtual void InitNavigation()
         {
-            this.SubscribeAnchors();
+            this.EnableSpafAnchors();
 
             // go home
             this.Navigate(this.Configuration.HomeId);
         }
 
-        /// <summary>
-        /// Subscribe all anchors of spaf
-        /// </summary>
-        protected void SubscribeAnchors()
-        {
-            var allAnchors = jQuery.Select("a");
-            allAnchors.Click(ev =>
-            {
-                var clickedElement = ev.Target;
-
-                if (clickedElement.GetType() != typeof(HTMLAnchorElement))
-                    clickedElement = jQuery.Element(ev.Target).Parents("a").Get(0);
-
-                var href = clickedElement.GetAttribute("href");
-
-                if(string.IsNullOrEmpty(href))
-                    throw new Exception("No anchor found for spaf navigator");
-
-                var isMyHref = href.StartsWith("spaf:");
-
-                // if is my href
-                if (isMyHref)
-                {
-                    ev.PreventDefault();
-                    var pageId = href.Replace("spaf:", "");
-                    this.Navigate(pageId);
-                }
-                // anchor default behaviour
-            });
-        }
+       
     }
 }
