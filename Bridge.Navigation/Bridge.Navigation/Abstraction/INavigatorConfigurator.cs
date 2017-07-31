@@ -1,7 +1,7 @@
 ﻿using System.Collections.Generic;
 using Bridge.jQuery2;
 
-namespace Bridge.Navigation.Abstraction
+namespace Bridge.Navigation
 {
     public interface INavigatorConfigurator
     {

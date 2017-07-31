@@ -2,10 +2,8 @@ using System;
 using System.Collections.Generic;
 using Bridge.Html5;
 using Bridge.jQuery2;
-using Bridge.Navigation.Abstraction;
-using Bridge.Linq;
 
-namespace Bridge.Navigation.Impl
+namespace Bridge.Navigation
 {
     /// <summary>
     /// INavigator implementation
@@ -40,10 +38,13 @@ namespace Bridge.Navigation.Impl
             {
                 // inject dependencies
                 if (page.JsDependencies != null)
-                    page.JsDependencies.ForEach(f =>
+                {
+                    foreach (var jsDependency in page.JsDependencies)
                     {
-                        jQuery.GetScript(f);
-                    });
+                        jQuery.GetScript(jsDependency);
+
+                    }
+                }
 
                 if (page.PageController != null)
                 {

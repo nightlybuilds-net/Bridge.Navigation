@@ -2,9 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Bridge.jQuery2;
-using Bridge.Navigation.Abstraction;
 
-namespace Bridge.Navigation.Impl
+namespace Bridge.Navigation
 {
     /// <summary>
     /// INavigatorConfigurator Implementation. Must be extended.
