@@ -31,8 +31,7 @@ namespace Bridge.Navigation
 
                 var href = clickedElement.GetAttribute("href");
 
-                if (string.IsNullOrEmpty(href))
-                    throw new Exception("No anchor found for spaf navigator");
+                if (string.IsNullOrEmpty(href)) return;
 
                 var isMyHref = href.StartsWith("spaf:");
 
