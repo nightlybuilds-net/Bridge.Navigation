@@ -73,6 +73,9 @@ namespace Bridge.Navigation
                     }
                 }
 
+                // prepare page
+                page.PreparePage?.Invoke();
+
                 if (page.PageController != null)
                 {
                     // leave actual controlelr
