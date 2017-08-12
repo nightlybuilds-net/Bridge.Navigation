@@ -12,6 +12,6 @@ namespace Bridge.Navigation
         public IEnumerable<string> JsDependencies { get; set; }
 
         public Func<bool> CanBeDirectLoad { get; set; }
-       
+        public Action PreparePage { get; set; }
     }
 }

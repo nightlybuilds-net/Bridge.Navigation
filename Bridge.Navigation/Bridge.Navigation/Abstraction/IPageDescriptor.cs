@@ -31,5 +31,10 @@ namespace Bridge.Navigation
         /// </summary>
         /// <returns></returns>
         Func<bool> CanBeDirectLoad { get; set; }
+
+        /// <summary>
+        /// Action for prepare page
+        /// </summary>
+        Action PreparePage { get; set; }
     }
 }
