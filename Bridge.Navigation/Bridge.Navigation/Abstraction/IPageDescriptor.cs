@@ -21,13 +21,8 @@ namespace Bridge.Navigation
         Func<IAmLoadable> PageController { get; set; }
 
         /// <summary>
-        /// Add Page JS dependencies.
-        /// </summary>
-        IEnumerable<string> JsDependencies { get; set; }
-
-        /// <summary>
         /// If null can be direct loaded
-        /// else evaluate func
+        /// else evaluate func. If false auto redirect to home
         /// </summary>
         /// <returns></returns>
         Func<bool> CanBeDirectLoad { get; set; }
@@ -36,5 +31,12 @@ namespace Bridge.Navigation
         /// Action for prepare page
         /// </summary>
         Action PreparePage { get; set; }
+        
+        /// <summary>
+        /// Define redirect rule for this descriptor.
+        /// If null or string empty => no redirect rules.
+        /// Return the KEY of a new page descriptor.
+        /// </summary>
+        Func<string> RedirectRules { get; set; }
     }
 }

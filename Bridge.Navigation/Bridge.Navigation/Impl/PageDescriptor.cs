@@ -9,9 +9,8 @@ namespace Bridge.Navigation
         public string Key { get; set; }
         public Func<string> HtmlLocation { get; set; }
         public Func<IAmLoadable> PageController { get; set; }
-        public IEnumerable<string> JsDependencies { get; set; }
-
         public Func<bool> CanBeDirectLoad { get; set; }
         public Action PreparePage { get; set; }
+        public Func<string> RedirectRules { get; set; }
     }
 }
