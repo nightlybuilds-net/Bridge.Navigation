@@ -1,5 +1,4 @@
-﻿using Bridge.Navigation.Abstraction;
-using Bridge.Navigation.Impl;
+﻿using Bridge.Navigation;
 
 namespace Bridge.Nav.TestApp
 {

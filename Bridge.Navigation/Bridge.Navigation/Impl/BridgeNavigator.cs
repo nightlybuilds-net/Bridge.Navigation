@@ -55,24 +55,21 @@ namespace Bridge.Navigation
         {
             var page = this.Configuration.GetPageDescriptorByKey(pageId);
             if (page == null) throw new Exception($"Page not found with ID {pageId}");
+            
+            // check redirect rule
+            var redirectKey = page.RedirectRules?.Invoke();
+            if (!string.IsNullOrEmpty(redirectKey))
+            {
+                this.Navigate(redirectKey,parameters);
+                return;
+            }
 
             var body = this.Configuration.Body;
-
             if(body == null)
                 throw new Exception("Cannot find navigation body element.");
 
             this.Configuration.Body.Load(page.HtmlLocation.Invoke(),null, (o,s,a) =>
             {
-                // inject dependencies
-                if (page.JsDependencies != null)
-                {
-                    foreach (var jsDependency in page.JsDependencies)
-                    {
-                        jQuery.GetScript(jsDependency);
-
-                    }
-                }
-
                 // prepare page
                 page.PreparePage?.Invoke();
 

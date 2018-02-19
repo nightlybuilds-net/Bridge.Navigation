@@ -1,8 +1,7 @@
 /**
- * @version   : 16.0.0 - Bridge.NET
+ * @version   : 16.7.1 - Bridge.NET
  * @author    : Object.NET, Inc. http://bridge.net/
- * @date      : 2017-08-01
- * @copyright : Copyright 2008-2017 Object.NET, Inc. http://object.net/
+ * @copyright : Copyright 2008-2018 Object.NET, Inc. http://object.net/
  * @license   : See license.txt and https://github.com/bridgedotnet/Bridge/blob/master/LICENSE.md
  */
 
@@ -19,6 +18,8 @@
 
     var core = {
         global: globals,
+
+        isNode: Object.prototype.toString.call(typeof process !== 'undefined' ? process : 0) === '[object process]',
 
         emptyFn: function () { },
 
@@ -71,6 +72,10 @@
                     return this.fn.getHashCode ? this.fn.getHashCode(this.v) : Bridge.getHashCode(this.v);
                 },
                 equals: function (o) {
+                    if (this === o) {
+                        return true;
+                    }
+
                     var eq = this.equals;
                     this.equals = null;
                     var r = Bridge.equals(this.v, o);
@@ -97,7 +102,6 @@
             }
 
             if (Bridge.isArray(o)) {
-                var arr = [];
                 for (var i = 0; i < o.length; i++) {
                     var item = o[i];
 
@@ -112,9 +116,8 @@
                         item = item.$clone();
                     }
 
-                    arr[i] = item;
+                    o[i] = item;
                 }
-                o = arr;
             }
 
             if (o && !noclone && o.$clone) {
@@ -244,9 +247,9 @@
             var scopeType = Bridge.getType(scope),
                 descriptors = scopeType.$descriptors || [];
 
-            descriptors.$propMap = descriptors.$propMap || {};
+            scope.$propMap = scope.$propMap || {};
 
-            if (descriptors.$propMap[name]) {
+            if (scope.$propMap[name]) {
                 return scope;
             }
 
@@ -267,7 +270,7 @@
                 }
             }
 
-            descriptors.$propMap[name] = true;
+            scope.$propMap[name] = true;
 
             return scope;
         },
@@ -410,7 +413,7 @@
 
             var name;
 
-            if (Bridge.isFunction(obj[name = "System$ICloneable$clone"])) {
+            if (Bridge.isFunction(Bridge.getProperty(obj, name = "System$ICloneable$clone"))) {
                 return obj[name]();
             }
 
@@ -484,7 +487,10 @@
             if (typeof Bridge.global.jQuery !== "undefined") {
                 Bridge.global.jQuery(delayfn);
             } else {
-                if (typeof Bridge.global.document === "undefined" || Bridge.global.document.readyState === "complete" || Bridge.global.document.readyState === "loaded") {
+                if (typeof Bridge.global.document === "undefined" ||
+                    Bridge.global.document.readyState === "complete" ||
+                    Bridge.global.document.readyState === "loaded" ||
+                    Bridge.global.document.readyState === "interactive") {
                     delayfn();
                 } else {
                     Bridge.on("DOMContentLoaded", Bridge.global.document, delayfn);
@@ -760,8 +766,8 @@
                 obj = Bridge.unbox(obj, true);
             }
 
-            var ctor = obj.constructor;
-            if (type.constructor === Function && obj instanceof type || ctor === type) {
+            var ctor = obj.constructor === Object && obj.$getType ? obj.$getType() : Bridge.Reflection.convertType(obj.constructor);
+            if (type.constructor === Function && obj instanceof type || ctor === type || Bridge.isObject(type)) {
                 return true;
             }
 
@@ -828,7 +834,7 @@
 
         as: function (obj, type, allowNull) {
             if (Bridge.is(obj, type, false, allowNull)) {
-                return obj.$boxed && type !== Object && type !== System.Object ? obj.v : obj;
+                return obj != null && obj.$boxed && type !== Object && type !== System.Object ? obj.v : obj;
             }
             return null;
         },
@@ -870,6 +876,24 @@
             }
 
             return obj;
+        },
+
+        copyProperties: function (to, from) {
+            var names = Bridge.getPropertyNames(from, false),
+                i;
+
+            for (i = 0; i < names.length; i++) {
+                var name = names[i],
+                    own = from.hasOwnProperty(name),
+                    dcount = name.split("$").length;
+
+                if (own && (dcount === 1 || dcount === 2 && name.match("\$\d+$"))) {
+                    to[name] = from[name];
+                }
+
+            }
+
+            return to;
         },
 
         merge: function (to, from, callback, elemFactory) {
@@ -1028,15 +1052,15 @@
 
             var name;
 
-            if (T && Bridge.isFunction(obj[name = "System$Collections$Generic$IEnumerable$1$" + Bridge.getTypeAlias(T) + "$getEnumerator"])) {
+            if (T && Bridge.isFunction(Bridge.getProperty(obj, name = "System$Collections$Generic$IEnumerable$1$" + Bridge.getTypeAlias(T) + "$getEnumerator"))) {
                 return obj[name]();
             }
 
-            if (T && Bridge.isFunction(obj[name = "System$Collections$Generic$IEnumerable$1$getEnumerator"])) {
+            if (T && Bridge.isFunction(Bridge.getProperty(obj, name = "System$Collections$Generic$IEnumerable$1$getEnumerator"))) {
                 return obj[name]();
             }
 
-            if (Bridge.isFunction(obj[name = "System$Collections$IEnumerable$getEnumerator"])) {
+            if (Bridge.isFunction(Bridge.getProperty(obj, name = "System$Collections$IEnumerable$getEnumerator"))) {
                 return obj[name]();
             }
 
@@ -1063,6 +1087,29 @@
             }
 
             return names;
+        },
+
+        getProperty: function (obj, propertyName) {
+            if(Bridge.isHtmlAttributeCollection(obj) && !this.isValidHtmlAttributeName(propertyName)) {
+                return undefined;
+            }
+
+            return obj[propertyName];
+        },
+
+        isValidHtmlAttributeName : function (name) {
+            // https://html.spec.whatwg.org/multipage/syntax.html#attributes-2
+
+            if (!name || !name.length) {
+                return false;
+            }
+
+            var r = /^[a-zA-Z_][\w\-]*$/;
+            return r.test(name);
+        },
+
+        isHtmlAttributeCollection: function (obj) {
+            return typeof obj !== "undefined" && (Object.prototype.toString.call(obj) === "[object NamedNodeMap]");
         },
 
         isDefined: function (value, noNull) {
@@ -1096,7 +1143,7 @@
         },
 
         toList: function (ienumerable, T) {
-            return new (System.Collections.Generic.List$1(T || System.Object))(ienumerable);
+            return new (System.Collections.Generic.List$1(T || System.Object).$ctor1)(ienumerable);
         },
 
         arrayTypes: [globals.Array, globals.Uint8Array, globals.Int8Array, globals.Int16Array, globals.Uint16Array, globals.Int32Array, globals.Uint32Array, globals.Float32Array, globals.Float64Array, globals.Uint8ClampedArray],
@@ -1116,7 +1163,7 @@
         },
 
         isDate: function (obj) {
-            return Object.prototype.toString.call(obj) === "[object Date]";
+            return obj instanceof Date;
         },
 
         isNull: function (value) {
@@ -1135,9 +1182,9 @@
             return typeof value === "string";
         },
 
-        unroll: function (value) {
+        unroll: function (value, scope) {
             var d = value.split("."),
-                o = Bridge.global[d[0]],
+                o = (scope || Bridge.global)[d[0]],
                 i = 1;
 
             for (i; i < d.length; i++) {
@@ -1168,41 +1215,58 @@
                 return true;
             }
 
-            if (a && a.$boxed && a.type.equals && a.type.equals.length === 2) {
-                return a.type.equals(a, b);
+            var guardItem = Bridge.$equalsGuard[Bridge.$equalsGuard.length - 1];
+            if (guardItem && guardItem.a === a && guardItem.b === b) {
+                return a === b;
             }
 
-            if (b && b.$boxed && b.type.equals && b.type.equals.length === 2) {
-                return b.type.equals(b, a);
-            }
+            Bridge.$equalsGuard.push({a: a, b: b});
 
-            if (a && Bridge.isFunction(a.equals) && a.equals.length === 1) {
-                return a.equals(b);
-            }
+            var fn = function (a, b) {
+                if (a && a.$boxed && a.type.equals && a.type.equals.length === 2) {
+                    return a.type.equals(a, b);
+                }
 
-            if (b && Bridge.isFunction(b.equals) && b.equals.length === 1) {
-                return b.equals(a);
-            } if (Bridge.isFunction(a) && Bridge.isFunction(b)) {
-                return Bridge.fn.equals.call(a, b);
-            } else if (Bridge.isDate(a) && Bridge.isDate(b)) {
-                return a.valueOf() === b.valueOf();
-            } else if (Bridge.isNull(a) && Bridge.isNull(b)) {
-                return true;
-            } else if (Bridge.isNull(a) !== Bridge.isNull(b)) {
-                return false;
-            }
+                if (b && b.$boxed && b.type.equals && b.type.equals.length === 2) {
+                    return b.type.equals(b, a);
+                }
 
-            var eq = a === b;
+                if (a && Bridge.isFunction(a.equals) && a.equals.length === 1) {
+                    return a.equals(b);
+                }
 
-            if (!eq && typeof a === "object" && typeof b === "object" && a !== null && b !== null && a.$kind === "struct" && b.$kind === "struct" && a.$$name === b.$$name) {
-                return Bridge.getHashCode(a) === Bridge.getHashCode(b) && Bridge.objectEquals(a, b);
-            }
+                if (b && Bridge.isFunction(b.equals) && b.equals.length === 1) {
+                    return b.equals(a);
+                } if (Bridge.isFunction(a) && Bridge.isFunction(b)) {
+                    return Bridge.fn.equals.call(a, b);
+                } else if (Bridge.isDate(a) && Bridge.isDate(b)) {
+                    if (a.kind !== undefined && a.ticks !== undefined && b.kind !== undefined && b.ticks !== undefined) {
+                        return a.ticks.equals(b.ticks);
+                    }
 
-            if (!eq && a && b && a.hasOwnProperty("item1") && Bridge.isPlainObject(a) && b.hasOwnProperty("item1") && Bridge.isPlainObject(b)) {
-                return Bridge.objectEquals(a, b);
-            }
+                    return a.valueOf() === b.valueOf();
+                } else if (Bridge.isNull(a) && Bridge.isNull(b)) {
+                    return true;
+                } else if (Bridge.isNull(a) !== Bridge.isNull(b)) {
+                    return false;
+                }
 
-            return eq;
+                var eq = a === b;
+
+                if (!eq && typeof a === "object" && typeof b === "object" && a !== null && b !== null && a.$kind === "struct" && b.$kind === "struct" && a.$$name === b.$$name) {
+                    return Bridge.getHashCode(a) === Bridge.getHashCode(b) && Bridge.objectEquals(a, b);
+                }
+
+                if (!eq && a && b && a.hasOwnProperty("item1") && Bridge.isPlainObject(a) && b.hasOwnProperty("item1") && Bridge.isPlainObject(b)) {
+                    return Bridge.objectEquals(a, b);
+                }
+
+                return eq;
+            };
+
+            var result = fn(a, b);
+            Bridge.$equalsGuard.pop();
+            return result;
         },
 
         objectEquals: function (a, b) {
@@ -1314,20 +1378,24 @@
 
                 return a < b ? -1 : (a > b ? 1 : 0);
             } else if (Bridge.isDate(a)) {
+                if (a.kind !== undefined && a.ticks !== undefined) {
+                    return Bridge.compare(a.ticks, b.ticks);
+                }
+
                 return Bridge.compare(a.valueOf(), b.valueOf());
             }
 
             var name;
 
-            if (T && Bridge.isFunction(a[name = "System$IComparable$1$" + Bridge.getTypeAlias(T) + "$compareTo"])) {
+            if (T && Bridge.isFunction(Bridge.getProperty(a, name = "System$IComparable$1$" + Bridge.getTypeAlias(T) + "$compareTo"))) {
                 return a[name](b);
             }
 
-            if (T && Bridge.isFunction(a[name = "System$IComparable$1$compareTo"])) {
+            if (T && Bridge.isFunction(Bridge.getProperty(a, name = "System$IComparable$1$compareTo"))) {
                 return a[name](b);
             }
 
-            if (Bridge.isFunction(a[name = "System$IComparable$compareTo"])) {
+            if (Bridge.isFunction(Bridge.getProperty(a, name = "System$IComparable$compareTo"))) {
                 return a[name](b);
             }
 
@@ -1335,15 +1403,15 @@
                 return a.compareTo(b);
             }
 
-            if (T && Bridge.isFunction(b[name = "System$IComparable$1$" + Bridge.getTypeAlias(T) + "$compareTo"])) {
+            if (T && Bridge.isFunction(Bridge.getProperty(b, name = "System$IComparable$1$" + Bridge.getTypeAlias(T) + "$compareTo"))) {
                 return -b[name](a);
             }
 
-            if (T && Bridge.isFunction(b[name = "System$IComparable$1$compareTo"])) {
+            if (T && Bridge.isFunction(Bridge.getProperty(b, name = "System$IComparable$1$compareTo"))) {
                 return -b[name](a);
             }
 
-            if (Bridge.isFunction(b[name = "System$IComparable$compareTo"])) {
+            if (Bridge.isFunction(Bridge.getProperty(b, name = "System$IComparable$compareTo"))) {
                 return -b[name](a);
             }
 
@@ -1372,16 +1440,20 @@
             } else if (Bridge.isNumber(a) || Bridge.isString(a) || Bridge.isBoolean(a)) {
                 return a === b;
             } else if (Bridge.isDate(a)) {
+                if (a.kind !== undefined && a.ticks !== undefined) {
+                    return a.ticks.equals(b.ticks);
+                }
+
                 return a.valueOf() === b.valueOf();
             }
 
             var name;
 
-            if (T && a != null && Bridge.isFunction(a[name = "System$IEquatable$1$" + Bridge.getTypeAlias(T) + "$equalsT"])) {
+            if (T && a != null && Bridge.isFunction(Bridge.getProperty(a, name = "System$IEquatable$1$" + Bridge.getTypeAlias(T) + "$equalsT"))) {
                 return a[name](b);
             }
 
-            if (T && b != null && Bridge.isFunction(b[name = "System$IEquatable$1$" + Bridge.getTypeAlias(T) + "$equalsT"])) {
+            if (T && b != null && Bridge.isFunction(Bridge.getProperty(b, name = "System$IEquatable$1$" + Bridge.getTypeAlias(T) + "$equalsT"))) {
                 return b[name](a);
             }
 
@@ -1411,7 +1483,7 @@
 
             var name;
 
-            if (Bridge.isFunction(obj[name = "System$IFormattable$format"])) {
+            if (Bridge.isFunction(Bridge.getProperty(obj, name = "System$IFormattable$format"))) {
                 return obj[name](formatString, provider);
             }
 
@@ -1685,14 +1757,17 @@
             },
 
             $build: function (handlers) {
+                if (!handlers || handlers.length === 0) {
+                    return null;
+                }
+
                 var fn = function () {
-                    var list = fn.$invocationList,
-                        result = null,
+                    var result = null,
                         i,
                         handler;
 
-                    for (i = 0; i < list.length; i++) {
-                        handler = list[i];
+                    for (i = 0; i < handlers.length; i++) {
+                        handler = handlers[i];
                         result = handler.apply(null, arguments);
                     }
 
@@ -1700,10 +1775,7 @@
                 };
 
                 fn.$invocationList = handlers ? Array.prototype.slice.call(handlers, 0) : [];
-
-                if (fn.$invocationList.length === 0) {
-                    return null;
-                }
+                handlers = fn.$invocationList.slice();
 
                 return fn;
             },
@@ -1834,6 +1906,7 @@
 
     globals.Bridge = core;
     globals.Bridge.caller = [];
+    globals.Bridge.$equalsGuard = [];
 
     if (globals.console) {
         globals.Bridge.Console = globals.console;
@@ -1843,289 +1916,6 @@
     globals.System.Diagnostics = {};
     globals.System.Diagnostics.Contracts = {};
     globals.System.Threading = {};
-
-    // @source Enum.js
-
-    var enumMethods = {
-        nameEquals: function (n1, n2, ignoreCase) {
-            if (ignoreCase) {
-                return n1.toLowerCase() === n2.toLowerCase();
-            }
-
-            return (n1.charAt(0).toLowerCase() + n1.slice(1)) === (n2.charAt(0).toLowerCase() + n2.slice(1));
-        },
-
-        checkEnumType: function (enumType) {
-            if (!enumType) {
-                throw new System.ArgumentNullException("enumType");
-            }
-
-            if (enumType.prototype && enumType.$kind !== "enum") {
-                throw new System.ArgumentException("", "enumType");
-            }
-        },
-
-        getUnderlyingType: function (type) {
-            System.Enum.checkEnumType(type);
-            return type.prototype.$utype || System.Int32;
-        },
-
-        $$name: "System.Enum",
-
-        toName: function (name) {
-            return name;
-        },
-
-        parse: function (enumType, s, ignoreCase, silent) {
-            System.Enum.checkEnumType(enumType);
-
-            if (s != null) {
-                if (enumType === Number || enumType === System.String || enumType.$number) {
-                    return s;
-                }
-
-                var intValue = {};
-
-                if (System.Int32.tryParse(s, intValue)) {
-                    return Bridge.box(intValue.v, enumType, function (obj) { return System.Enum.toString(enumType, obj); });
-                }
-
-                var values = enumType;
-
-                if (!enumType.prototype || !enumType.prototype.$flags) {
-                    for (var f in values) {
-                        if (enumMethods.nameEquals(f, s, ignoreCase)) {
-                            return Bridge.box(values[f], enumType, function (obj) { return System.Enum.toString(enumType, obj); });
-                        }
-                    }
-                } else {
-                    var parts = s.split(','),
-                        value = 0,
-                        parsed = true;
-
-                    for (var i = parts.length - 1; i >= 0; i--) {
-                        var part = parts[i].trim(),
-                            found = false;
-
-                        for (var f in values) {
-                            if (enumMethods.nameEquals(f, part, ignoreCase)) {
-                                value |= values[f];
-                                found = true;
-
-                                break;
-                            }
-                        }
-
-                        if (!found) {
-                            parsed = false;
-
-                            break;
-                        }
-                    }
-
-                    if (parsed) {
-                        return Bridge.box(value, enumType, function (obj) { return System.Enum.toString(enumType, obj); });
-                    }
-                }
-            }
-
-            if (silent !== true) {
-                throw new System.ArgumentException('Invalid Enumeration Value');
-            }
-
-            return null;
-        },
-
-        toStringFn: function(type) {
-            return function(value) {
-                return System.Enum.toString(type, value);
-            };
-        },
-
-        toString: function (enumType, value, forceFlags) {
-            if (arguments.length === 0) {
-                return "System.Enum";
-            }
-
-            if (value && value.$boxed && enumType === System.Enum) {
-                enumType = value.type;
-            }
-
-            value = Bridge.unbox(value, true);
-
-            if (enumType === Number || enumType === System.String || enumType.$number) {
-                return value.toString();
-            }
-
-            System.Enum.checkEnumType(enumType);
-
-            var values = enumType,
-                isLong = System.Int64.is64Bit(value);
-
-            if (((!enumType.prototype || !enumType.prototype.$flags) && forceFlags !== true) || (value === 0)) {
-                for (var i in values) {
-                    if (isLong && System.Int64.is64Bit(values[i]) ? (values[i].eq(value)) : (values[i] === value)) {
-                        return enumMethods.toName(i);
-                    }
-                }
-
-                //throw new System.ArgumentException('Invalid Enumeration Value');
-                return value.toString();
-            } else {
-                var parts = [];
-
-                for (var i in values) {
-                    if (isLong && System.Int64.is64Bit(values[i]) ? (!values[i].and(value).isZero()) : (values[i] & value)) {
-                        parts.push(enumMethods.toName(i));
-                    }
-                }
-
-                if (!parts.length) {
-                    //throw new System.ArgumentException('Invalid Enumeration Value');
-                    return value.toString();
-                }
-
-                return parts.join(', ');
-            }
-        },
-
-        getValues: function (enumType) {
-            System.Enum.checkEnumType(enumType);
-
-            var parts = [],
-                values = enumType;
-
-            for (var i in values) {
-                if (values.hasOwnProperty(i) && i.indexOf("$") < 0 && typeof values[i] !== "function") {
-                    parts.push(values[i]);
-                }
-            }
-
-            return parts.sort(function (i1, i2) {
-                return i1 - i2;
-            });
-        },
-
-        format: function (enumType, value, format) {
-            System.Enum.checkEnumType(enumType);
-
-            var name;
-
-            if (!Bridge.hasValue(value) && (name = "value") || !Bridge.hasValue(format) && (name = "format")) {
-                throw new System.ArgumentNullException(name);
-            }
-
-            value = Bridge.unbox(value, true);
-
-            switch (format) {
-                case "G":
-                case "g":
-                    return System.Enum.toString(enumType, value);
-                case "x":
-                case "X":
-                    return value.toString(16);
-                case "d":
-                case "D":
-                    return value.toString();
-                case "f":
-                case "F":
-                    return System.Enum.toString(enumType, value, true);
-                default:
-                    throw new System.FormatException();
-            }
-        },
-
-        getNames: function (enumType) {
-            System.Enum.checkEnumType(enumType);
-
-            var parts = [],
-                values = enumType;
-
-            for (var i in values) {
-                if (values.hasOwnProperty(i) && i.indexOf("$") < 0 && typeof values[i] !== "function") {
-                    parts.push([enumMethods.toName(i), values[i]]);
-                }
-            }
-
-            return parts.sort(function (i1, i2) {
-                return i1[1] - i2[1];
-            }).map(function (i) {
-                return i[0];
-            });
-        },
-
-        getName: function (enumType, value) {
-            value = Bridge.unbox(value, true);
-
-            if (value == null) {
-                throw new System.ArgumentNullException("value");
-            }
-
-            if (!(typeof (value) === "number" && Math.floor(value, 0) === value)) {
-                throw new System.ArgumentException("Argument must be integer", "value");
-            }
-
-            System.Enum.checkEnumType(enumType);
-
-            var values = enumType;
-            for (var i in values) {
-                if (values[i] === value) {
-                    return i;
-                }
-            }
-
-            return null;
-        },
-
-        hasFlag: function (value, flag) {
-            flag = Bridge.unbox(flag, true);
-            return flag === 0 || !!(value & flag);
-        },
-
-        isDefined: function (enumType, value) {
-            value = Bridge.unbox(value, true);
-
-            System.Enum.checkEnumType(enumType);
-
-            var values = enumType,
-                isString = Bridge.isString(value);
-
-            for (var i in values) {
-                if (isString ? enumMethods.nameEquals(i, value, false) : values[i] === value) {
-                    return true;
-                }
-            }
-
-            return false;
-        },
-
-        tryParse: function (enumType, value, result, ignoreCase) {
-            result.v = 0;
-            result.v = Bridge.unbox(enumMethods.parse(enumType, value, ignoreCase, true), true);
-
-            if (result.v == null) {
-                return false;
-            }
-
-            return true;
-        },
-
-        equals: function (v1, v2, T) {
-            if (v2 && v2.$boxed && (v1 && v1.$boxed || T)) {
-                if (v2.type !== (v1.type || T)) {
-                    return false;
-                }
-            }
-
-            return Bridge.unbox(v1, true) === Bridge.unbox(v2, true);
-        },
-
-        equalsT: function (v1, v2) {
-            return Bridge.unbox(v1, true) === Bridge.unbox(v2, true);
-        }
-    };
-
-    System.Enum = enumMethods;
 
     // @source Browser.js
 
@@ -2290,7 +2080,7 @@
                         d,
                         cfg;
 
-                    if (v != null && Bridge.isJSObject(v) && (!v.get || !v.set)) {
+                    if (v != null && Bridge.isPlainObject(v) && (!v.get || !v.set)) {
                         for (var k = 0; k < descriptors.length; k++) {
                             if (descriptors[k].name === name) {
                                 d = descriptors[k];
@@ -2298,11 +2088,11 @@
                         }
 
                         if (d && d.get && !v.get) {
-                            v.get = Bridge.emptyFn;
+                            v.get = d.get;
                         }
 
                         if (d && d.set && !v.set) {
-                            v.set = Bridge.emptyFn;
+                            v.set = d.set;
                         }
                     }
 
@@ -2345,8 +2135,22 @@
                                     m = prototype[name];
                                 }
 
-                                scope[alias] = m;
-                                aliases.push({ fn: name, alias: alias });
+                                if (!Bridge.isFunction(m)) {
+                                    descriptor = {
+                                        get: function () {
+                                            return this[name];
+                                        },
+
+                                        set: function (value) {
+                                            this[name] = value;
+                                        }
+                                    };
+                                    Object.defineProperty(obj, alias, descriptor);
+                                    aliases.push({ alias: alias, descriptor: descriptor });
+                                } else {
+                                    scope[alias] = m;
+                                    aliases.push({ fn: name, alias: alias });
+                                }
                             }
                         }
                     })(statics ? scope : prototype, config.alias[i], config.alias[i + 1], cls);
@@ -2380,6 +2184,7 @@
 
                 for (var i = 0; i < keys.length; i++) {
                     var name = keys[i];
+
                     if (reserved.indexOf(name) === -1) {
                         to[name] = obj[name];
                     }
@@ -2393,32 +2198,40 @@
                     Bridge.apply(to, obj.methods);
                 }
 
-                var config = {};
+                var config = {},
+                    write = false;
+
                 if (obj.props) {
                     config.properties = obj.props;
-                }
-                else if (obj.properties) {
+                    write = true;
+                } else if (obj.properties) {
                     config.properties = obj.properties;
+                    write = true;
                 }
 
                 if (obj.events) {
                     config.events = obj.events;
+                    write = true;
                 }
 
                 if (obj.alias) {
                     config.alias = obj.alias;
+                    write = true;
                 }
 
                 if (obj.ctors) {
                     if (obj.ctors.init) {
                         config.init = obj.ctors.init;
+                        write = true;
                         delete obj.ctors.init;
                     }
 
                     Bridge.apply(to, obj.ctors);
                 }
 
-                to.$config = config;
+                if (write) {
+                    to.$config = config;
+                }
             };
 
             if (obj.main) {
@@ -2485,7 +2298,7 @@
                     obj = prop.apply(null, args);
                     c = Bridge.define(Bridge.Class.genericName(className, args), obj, true, { fn: fn, args: args });
 
-                    if (!Bridge.Class.staticInitAllow) {
+                    if (!Bridge.Class.staticInitAllow && !Bridge.Class.queueIsBlocked) {
                         Bridge.Class.$queue.push(c);
                     }
 
@@ -2558,6 +2371,10 @@
 
             prop.$kind = prop.$kind || "class";
 
+            if (prop.$kind === "enum") {
+                extend = [System.Enum];
+            }
+
             if (prop.$noRegister === true) {
                 registerT = false;
                 delete prop.$noRegister;
@@ -2612,8 +2429,8 @@
             }
 
             if (prop.$literal) {
-                if ((!statics || !statics.getDefaultValue)) {
-                    Class.getDefaultValue = function() {
+                if ((!statics || !statics.createInstance)) {
+                    Class.createInstance = function () {
                         var obj = {};
                         obj.$getType = function() { return Class };
                         return obj;
@@ -2634,6 +2451,10 @@
 
             Class.$$name = className;
             Class.$kind = prop.$kind;
+
+            if (prop.$metadata) {
+                Class.$metadata = prop.$metadata;
+            }
 
             if (gCfg && isGenericInstance) {
                 Class.$genericTypeDefinition = gCfg.fn;
@@ -2746,8 +2567,25 @@
                     if (name === "ctor") {
                         Class["$ctor"] = member;
                     } else {
+                        if (prop.$kind === "enum" && !Bridge.isFunction(member) && name.charAt(0) !== "$") {
+                            Class.$names = Class.$names || [];
+                            Class.$names.push({name: name, value: member});
+                        }
+
                         Class[name] = member;
                     }
+                }
+
+                if (prop.$kind === "enum" && Class.$names) {
+                    Class.$names = Class.$names.sort(function (i1, i2) {
+                        if (Bridge.isFunction(i1.value.eq)) {
+                            return i1.value.sub(i2.value).sign();
+                        }
+
+                        return i1.value - i2.value;
+                    }).map(function(i) {
+                        return i.name;
+                    });
                 }
             }
 
@@ -2758,7 +2596,7 @@
             Bridge.Class.setInheritors(Class, extend);
 
             fn = function () {
-                if (Bridge.Class.staticInitAllow) {
+                if (Bridge.Class.staticInitAllow && !Class.$isGenericTypeDefinition) {
                     Class.$staticInit = null;
 
                     if (Class.$initMembers) {
@@ -2897,7 +2735,7 @@
                             descriptor = descriptors[i];
                             break;
                         }
-                    }    
+                    }
                 }
 
                 var dcount = key.split("$").length;
@@ -3152,8 +2990,16 @@
             fn.$staticInit = function() {
                 fn.$typeArguments = Bridge.Reflection.createTypeParams(prop);
 
+                var old = Bridge.Class.staticInitAllow,
+                    oldIsBlocked = Bridge.Class.queueIsBlocked;
+                Bridge.Class.staticInitAllow = false;
+                Bridge.Class.queueIsBlocked = true;
+
                 var cfg = prop.apply(null, fn.$typeArguments),
                     extend = cfg.$inherits || cfg.inherits;
+
+                Bridge.Class.staticInitAllow = old;
+                Bridge.Class.queueIsBlocked = oldIsBlocked;
 
                 if (extend && Bridge.isFunction(extend)) {
                     extend = extend();
@@ -3178,6 +3024,19 @@
         },
 
         init: function (fn) {
+            if (Bridge.Reflection) {
+                var metas = Bridge.Reflection.deferredMeta,
+                len = metas.length;
+
+                if (len > 0) {
+                    Bridge.Reflection.deferredMeta = [];
+                    for (var i = 0; i < len; i++) {
+                        var item = metas[i];
+                        Bridge.setMetadata(item.typeName, item.metadata);
+                    }
+                }
+            }
+
             if (fn) {
                 var old = Bridge.Class.staticInitAllow;
                 Bridge.Class.staticInitAllow = true;
@@ -3205,7 +3064,7 @@
                              cls[name]();
                         });
                     })(t, t.prototype.$main.name || "Main");
-                    
+
                     t.prototype.$main = null;
                 }
             }
@@ -3221,7 +3080,7 @@
 
     // @source ReflectionAssembly.js
 
-    Bridge.assembly = function (assemblyName, res, callback) {
+    Bridge.assembly = function (assemblyName, res, callback, restore) {
         if (!callback) {
             callback = res;
             res = {};
@@ -3237,13 +3096,23 @@
             Bridge.apply(asm.res, res || {});
         }
 
+        var oldAssembly = Bridge.$currentAssembly;
         Bridge.$currentAssembly = asm;
 
         if (callback) {
+            var old = Bridge.Class.staticInitAllow;
+            Bridge.Class.staticInitAllow = false;
+
             callback.call(Bridge.global, asm, Bridge.global);
+
+            Bridge.Class.staticInitAllow = old;
         }
 
         Bridge.init();
+
+        if (restore) {
+            Bridge.$currentAssembly = oldAssembly;
+        }
     };
 
     Bridge.define("System.Reflection.Assembly", {
@@ -3298,13 +3167,13 @@
         },
 
         getCustomAttributes: function (attributeType) {
-            if (attributeType && !Bridge.isBoolean(attributeType)) {
+            if (this.attr && attributeType && !Bridge.isBoolean(attributeType)) {
                 return this.attr.filter(function (a) {
                     return Bridge.is(a, attributeType);
                 });
             }
 
-            return this.attr;
+            return this.attr || [];
         }
     });
 
@@ -3317,7 +3186,7 @@
     // @source Object.js
 
     Bridge.define("System.Object", {
-        
+
     });
 
     Bridge.define("System.Void", {
@@ -3326,16 +3195,28 @@
     // @source systemAssemblyVersion.js
 
     Bridge.init(function () {
-        Bridge.SystemAssembly.version = "16.0.0";
-        Bridge.SystemAssembly.compiler = "16.0.0";
+        Bridge.SystemAssembly.version = "16.7.1";
+        Bridge.SystemAssembly.compiler = "16.7.1";
     });
 
     Bridge.define("Bridge.Utils.SystemAssemblyVersion");
 
     // @source Reflection.js
 
-    Bridge.Reflection = {
+Bridge.Reflection = {
+        deferredMeta: [],
+
         setMetadata: function (type, metadata) {
+            if (Bridge.isString(type)) {
+                var typeName = type;
+                type = Bridge.unroll(typeName);
+
+                if (type == null) {
+                    Bridge.Reflection.deferredMeta.push({ typeName: typeName, metadata: metadata });
+                    return;
+                }
+            }
+
             type.$getMetadata = Bridge.Reflection.getMetadata;
             type.$metadata = metadata;
         },
@@ -3562,7 +3443,9 @@
                 pIndex = fullName.lastIndexOf('+', bIndex >= 0 ? bIndex : fullName.length),
                 nsIndex = pIndex > -1 ? pIndex : fullName.lastIndexOf('.', bIndex >= 0 ? bIndex : fullName.length);
 
-            return nsIndex > 0 ? (bIndex >= 0 ? fullName.substring(nsIndex + 1, bIndex) : fullName.substr(nsIndex + 1)) : fullName;
+            var name = nsIndex > 0 ? (bIndex >= 0 ? fullName.substring(nsIndex + 1, bIndex) : fullName.substr(nsIndex + 1)) : fullName;
+
+            return type.$isArray ? name + "[]" : name;
         },
 
         getTypeNamespace: function (type, name) {
@@ -3590,8 +3473,30 @@
             }
         },
 
+        _extractArrayRank: function (name) {
+            var rank = -1,
+                m = (/<(\d+)>$/g).exec(name);
+
+            if (m) {
+                name = name.substring(0, m.index);
+                rank = parseInt(m[1]);
+            }
+
+            m = (/\[(,*)\]$/g).exec(name);
+            if (m) {
+                name = name.substring(0, m.index);
+                rank = m[1].length + 1;
+            }
+
+            return {
+                rank: rank,
+                name: name
+            };
+        },
+
         _getAssemblyType: function (asm, name) {
-            var noAsm = false;
+            var noAsm = false,
+                rank = -1;
 
             if (new RegExp(/[\+\`]/).test(name)) {
                 name = name.replace(/\+|\`/g, function(match) { return match === "+" ? "." : "$"});
@@ -3602,11 +3507,15 @@
                 noAsm = true;
             }
 
+            var rankInfo = Bridge.Reflection._extractArrayRank(name);
+            rank = rankInfo.rank;
+            name = rankInfo.name;
+
             if (asm.$types) {
                 var t = asm.$types[name] || null;
 
                 if (t) {
-                    return t;
+                    return rank > -1 ? System.Array.type(t, rank) : t;
                 }
 
                 if (asm.name === "mscorlib") {
@@ -3631,7 +3540,7 @@
                 return null;
             }
 
-            return scope;
+            return rank > -1 ? System.Array.type(scope, rank) : scope;
         },
 
         getAssemblyTypes: function (asm) {
@@ -3754,16 +3663,42 @@
         _getType: function (typeName, asm, re, noinit) {
             var outer = !re;
 
+            if (outer) {
+                typeName = typeName.replace(/\[(,*)\]/g, function (match, g1) {
+                    return "<" + (g1.length + 1) + ">"
+                });
+            }
+
+            var next = function () {
+                for (; ;) {
+                    var m = re.exec(typeName);
+
+                    if (m && m[0] == "[" && (typeName[m.index + 1] === ']' || typeName[m.index + 1] === ',')) {
+                        continue;
+                    }
+
+                    if (m && m[0] == "]" && (typeName[m.index - 1] === '[' || typeName[m.index - 1] === ',')) {
+                        continue;
+                    }
+
+                    if (m && m[0] == "," && (typeName[m.index + 1] === ']' || typeName[m.index + 1] === ',')) {
+                        continue;
+                    }
+
+                    return m;
+                }
+            };
+
             re = re || /[[,\]]/g;
 
             var last = re.lastIndex,
-                m = re.exec(typeName),
+                m = next(),
                 tname,
                 targs = [],
                 t,
                 noasm = !asm;
 
-            asm = asm || Bridge.$currentAssembly;
+            //asm = asm || Bridge.$currentAssembly;
 
             if (m) {
                 tname = typeName.substring(last, m.index);
@@ -3775,15 +3710,15 @@
                         }
 
                         for (; ;) {
-                            re.exec(typeName);
-                            t = Bridge.Reflection._getType(typeName, Bridge.SystemAssembly, re);
+                            next();
+                            t = Bridge.Reflection._getType(typeName, null, re);
 
                             if (!t) {
                                 return null;
                             }
 
                             targs.push(t);
-                            m = re.exec(typeName);
+                            m = next();
 
                             if (m[0] === ']') {
                                 break;
@@ -3792,10 +3727,15 @@
                             }
                         }
 
-                        m = re.exec(typeName);
+                        var arrMatch = (/^\s*<(\d+)>/g).exec(typeName.substring(m.index+1));
+                        if (arrMatch) {
+                            tname = tname + "<" + parseInt(arrMatch[1]) + ">";
+                        }
+
+                        m = next();
 
                         if (m && m[0] === ',') {
-                            re.exec(typeName);
+                            next();
 
                             if (!(asm = System.Reflection.Assembly.assemblies[(re.lastIndex > 0 ? typeName.substring(m.index + 1, re.lastIndex - 1) : typeName.substring(m.index + 1)).trim()])) {
                                 return null;
@@ -3807,7 +3747,7 @@
                         break;
 
                     case ',':
-                        re.exec(typeName);
+                        next();
 
                         if (!(asm = System.Reflection.Assembly.assemblies[(re.lastIndex > 0 ? typeName.substring(m.index + 1, re.lastIndex - 1) : typeName.substring(m.index + 1)).trim()])) {
                             return null;
@@ -3823,7 +3763,12 @@
                 return null;
             }
 
-            t = Bridge.Reflection._getAssemblyType(asm, tname.trim());
+            tname = tname.trim();
+            var rankInfo = Bridge.Reflection._extractArrayRank(tname);
+            var rank = rankInfo.rank;
+            tname = rankInfo.name;
+
+            t = Bridge.Reflection._getAssemblyType(asm, tname);
 
             if (noinit) {
                 return t;
@@ -3842,9 +3787,15 @@
             }
 
             t = targs.length ? t.apply(null, targs) : t;
+
             if (t && t.$staticInit) {
                 t.$staticInit();
             }
+
+            if (rank > -1) {
+                t = System.Array.type(t, rank);
+            }
+
             return t;
         },
 
@@ -3857,6 +3808,7 @@
 
         canAcceptNull: function (type) {
             if (type.$kind === "struct" ||
+                type.$kind === "enum" ||
                 type === System.Decimal ||
                 type === System.Int64 ||
                 type === System.UInt64 ||
@@ -3869,6 +3821,8 @@
                 type === System.Int32 ||
                 type === System.UInt32 ||
                 type === Bridge.Int ||
+                type === System.Boolean ||
+                type === System.DateTime ||
                 type === Boolean ||
                 type === Date ||
                 type === Number) {
@@ -4141,6 +4095,21 @@
                 }
             }
 
+            var orig = method;
+            method = function () {
+                var args = [],
+                    params = mi.pi || [],
+                    p;
+
+                for (var i = 0; i < arguments.length; i++) {
+                    p = params[i] || params[params.length - 1];
+                    args[i] = p && p.pt === System.Object ? arguments[i] : Bridge.unbox(arguments[i]);
+                }
+
+                var v = orig.apply(this, args);
+                return v != null && mi.box ? mi.box(v) : v;
+            };
+
             return bind !== false ? Bridge.fn.bind(target, method) : method;
         },
 
@@ -4154,6 +4123,10 @@
             } else if (ci.sm) {
                 return ci.td[ci.sn].apply(null, args);
             } else {
+                if (ci.td.$literal) {
+                    return (ci.sn ? ci.td[ci.sn] : ci.td).apply(ci.td, args);
+                }
+
                 return Bridge.Reflection.applyConstructor(ci.sn ? ci.td[ci.sn] : ci.td, args);
             }
         },
@@ -4170,7 +4143,7 @@
             if (arguments.length === 3) {
                 obj[fi.sn] = arguments[2];
             } else {
-                return obj[fi.sn];
+                return fi.box ? fi.box(obj[fi.sn]) : obj[fi.sn];
             }
         },
 
@@ -4193,6 +4166,10 @@
             }
 
             return false;
+        },
+
+        isValueType: function (type) {
+            return !Bridge.Reflection.canAcceptNull(type);
         }
     };
 
@@ -4288,6 +4265,14 @@
                     }
 
                     return Bridge.is(obj, System.IComparable$1(T), true);
+                },
+
+                isAssignableFrom: function (type) {
+                    if (type === System.DateTime && T === Date) {
+                        return true;
+                    }
+
+                    return Bridge.Reflection.getInterfaces(type).indexOf(System.IComparable$1(T)) >= 0;
                 }
             }
         };
@@ -4304,6 +4289,14 @@
                     }
 
                     return Bridge.is(obj, System.IEquatable$1(T), true);
+                },
+
+                isAssignableFrom: function (type) {
+                    if (type === System.DateTime && T === Date) {
+                        return true;
+                    }
+
+                    return Bridge.Reflection.getInterfaces(type).indexOf(System.IEquatable$1(T)) >= 0;
                 }
             }
         };
@@ -4315,6 +4308,359 @@
 
     Bridge.define("System.IDisposable", {
         $kind: "interface"
+    });
+
+    Bridge.define("System.IAsyncResult", {
+        $kind: "interface"
+    });
+
+    // @source Enum.js
+
+    var enumMethods = {
+        nameEquals: function (n1, n2, ignoreCase) {
+            if (ignoreCase) {
+                return n1.toLowerCase() === n2.toLowerCase();
+            }
+
+            return (n1.charAt(0).toLowerCase() + n1.slice(1)) === (n2.charAt(0).toLowerCase() + n2.slice(1));
+        },
+
+        checkEnumType: function (enumType) {
+            if (!enumType) {
+                throw new System.ArgumentNullException("enumType");
+            }
+
+            if (enumType.prototype && enumType.$kind !== "enum") {
+                throw new System.ArgumentException("", "enumType");
+            }
+        },
+
+        getUnderlyingType: function (type) {
+            System.Enum.checkEnumType(type);
+            return type.prototype.$utype || System.Int32;
+        },
+
+        toName: function (name) {
+            return name;
+        },
+
+        parse: function (enumType, s, ignoreCase, silent) {
+            System.Enum.checkEnumType(enumType);
+
+            if (s != null) {
+                if (enumType === Number || enumType === System.String || enumType.$number) {
+                    return s;
+                }
+
+                var intValue = {};
+
+                if (System.Int32.tryParse(s, intValue)) {
+                    return Bridge.box(intValue.v, enumType, function (obj) { return System.Enum.toString(enumType, obj); });
+                }
+
+                var names = System.Enum.getNames(enumType),
+                    values = enumType;
+
+                if (!enumType.prototype || !enumType.prototype.$flags) {
+                    for (var i = 0; i < names.length; i++) {
+                        var name = names[i];
+
+                        if (enumMethods.nameEquals(name, s, ignoreCase)) {
+                            return Bridge.box(values[name], enumType, function (obj) { return System.Enum.toString(enumType, obj); });
+                        }
+                    }
+                } else {
+                    var parts = s.split(','),
+                        value = 0,
+                        parsed = true;
+
+                    for (var i = parts.length - 1; i >= 0; i--) {
+                        var part = parts[i].trim(),
+                            found = false;
+
+                        for (var n = 0; n < names.length; n++) {
+                            var name = names[n];
+
+                            if (enumMethods.nameEquals(name, part, ignoreCase)) {
+                                value |= values[name];
+                                found = true;
+
+                                break;
+                            }
+                        }
+
+                        if (!found) {
+                            parsed = false;
+
+                            break;
+                        }
+                    }
+
+                    if (parsed) {
+                        return Bridge.box(value, enumType, function (obj) { return System.Enum.toString(enumType, obj); });
+                    }
+                }
+            }
+
+            if (silent !== true) {
+                throw new System.ArgumentException('Invalid Enumeration Value');
+            }
+
+            return null;
+        },
+
+        toStringFn: function(type) {
+            return function(value) {
+                return System.Enum.toString(type, value);
+            };
+        },
+
+        toString: function (enumType, value, forceFlags) {
+            if (arguments.length === 0) {
+                return "System.Enum";
+            }
+
+            if (value && value.$boxed && enumType === System.Enum) {
+                enumType = value.type;
+            }
+
+            value = Bridge.unbox(value, true);
+
+            if (enumType === Number || enumType === System.String || enumType.$number) {
+                return value.toString();
+            }
+
+            System.Enum.checkEnumType(enumType);
+
+            var values = enumType,
+                names = System.Enum.getNames(enumType),
+                isLong = System.Int64.is64Bit(value);
+
+            if (((!enumType.prototype || !enumType.prototype.$flags) && forceFlags !== true) || (value === 0)) {
+                for (var i = 0; i < names.length; i++) {
+                    var name = names[i];
+
+                    if (isLong && System.Int64.is64Bit(values[name]) ? (values[name].eq(value)) : (values[name] === value)) {
+                        return enumMethods.toName(name);
+                    }
+                }
+
+                //throw new System.ArgumentException('Invalid Enumeration Value');
+                return value.toString();
+            } else {
+                var parts = [],
+                    entries = System.Enum.getValuesAndNames(enumType),
+                    index = entries.length - 1,
+                    saveResult = value;
+
+                while (index >= 0) {
+                    var entry = entries[index],
+                        long = isLong && System.Int64.is64Bit(entry.value);
+
+                    if ((index == 0) && (long ? entry.value.isZero() : entry.value == 0)) {
+                        break;
+                    }
+
+                    if (long ? (value.and(entry.value).eq(entry.value)) : ((value & entry.value) == entry.value)) {
+                        if (long) {
+                            value = value.sub(entry.value);
+                        } else {
+                            value -= entry.value;
+                        }
+
+                        parts.unshift(entry.name);
+                    }
+
+                    index--;
+                }
+
+                if (isLong ? !value.isZero() : value !== 0) {
+                    return saveResult.toString();
+                }
+
+                if (isLong ? saveResult.isZero() : saveResult === 0) {
+                    var entry = entries[0];
+                    if (entry && (System.Int64.is64Bit(entry.value) ? entry.value.isZero() : (entry.value == 0))) {
+                        return entry.name;
+                    }
+
+                    return "0";
+                }
+
+                return parts.join(', ');
+            }
+        },
+
+        getValuesAndNames: function (enumType) {
+            System.Enum.checkEnumType(enumType);
+
+            var parts = [],
+                names = System.Enum.getNames(enumType),
+                values = enumType;
+
+            for (var i = 0; i < names.length; i++) {
+                parts.push({ name: names[i], value: values[names[i]] });
+            }
+
+            return parts.sort(function (i1, i2) {
+                return System.Int64.is64Bit(i1.value) ? i1.value.sub(i2.value).sign() : (i1.value - i2.value);
+            });
+        },
+
+        getValues: function (enumType) {
+            System.Enum.checkEnumType(enumType);
+
+            var parts = [],
+                names = System.Enum.getNames(enumType),
+                values = enumType;
+
+            for (var i = 0; i < names.length; i++) {
+                parts.push(values[names[i]]);
+            }
+
+            return parts.sort(function (i1, i2) {
+                return System.Int64.is64Bit(i1) ? i1.sub(i2).sign() : (i1 - i2);
+            });
+        },
+
+        format: function (enumType, value, format) {
+            System.Enum.checkEnumType(enumType);
+
+            var name;
+
+            if (!Bridge.hasValue(value) && (name = "value") || !Bridge.hasValue(format) && (name = "format")) {
+                throw new System.ArgumentNullException(name);
+            }
+
+            value = Bridge.unbox(value, true);
+
+            switch (format) {
+                case "G":
+                case "g":
+                    return System.Enum.toString(enumType, value);
+                case "x":
+                case "X":
+                    return value.toString(16);
+                case "d":
+                case "D":
+                    return value.toString();
+                case "f":
+                case "F":
+                    return System.Enum.toString(enumType, value, true);
+                default:
+                    throw new System.FormatException();
+            }
+        },
+
+        getNames: function (enumType) {
+            System.Enum.checkEnumType(enumType);
+
+            var parts = [],
+                values = enumType;
+
+            if (enumType.$names) {
+                return enumType.$names.slice(0);
+            }
+
+            for (var i in values) {
+                if (values.hasOwnProperty(i) && i.indexOf("$") < 0 && typeof values[i] !== "function") {
+                    parts.push([enumMethods.toName(i), values[i]]);
+                }
+            }
+
+            return parts.sort(function (i1, i2) {
+                return System.Int64.is64Bit(i1[1]) ? i1[1].sub(i2[1]).sign() : (i1[1] - i2[1]);
+            }).map(function (i) {
+                return i[0];
+            });
+        },
+
+        getName: function (enumType, value) {
+            value = Bridge.unbox(value, true);
+
+            if (value == null) {
+                throw new System.ArgumentNullException("value");
+            }
+
+            var isLong = System.Int64.is64Bit(value);
+
+            if (!isLong && !(typeof (value) === "number" && Math.floor(value, 0) === value)) {
+                throw new System.ArgumentException("Argument must be integer", "value");
+            }
+
+            System.Enum.checkEnumType(enumType);
+
+            var names = System.Enum.getNames(enumType),
+                values = enumType;
+
+            for (var i = 0; i < names.length; i++) {
+                var name = names[i];
+
+                if (isLong ? value.eq(values[name]) : (values[name] === value)) {
+                    return name;
+                }
+            }
+
+            return null;
+        },
+
+        hasFlag: function (value, flag) {
+            flag = Bridge.unbox(flag, true);
+            var isLong = System.Int64.is64Bit(value);
+            return flag === 0 || (isLong ? !value.and(flag).isZero() : !!(value & flag));
+        },
+
+        isDefined: function (enumType, value) {
+            value = Bridge.unbox(value, true);
+
+            System.Enum.checkEnumType(enumType);
+
+            var values = enumType,
+                names = System.Enum.getNames(enumType),
+                isString = Bridge.isString(value),
+                isLong = System.Int64.is64Bit(value);
+
+            for (var i = 0; i < names.length; i++) {
+                var name = names[i];
+                if (isString ? enumMethods.nameEquals(name, value, false) : (isLong ? value.eq(values[name]) : (values[name] === value))) {
+                    return true;
+                }
+            }
+
+            return false;
+        },
+
+        tryParse: function (enumType, value, result, ignoreCase) {
+            result.v = Bridge.unbox(enumMethods.parse(enumType, value, ignoreCase, true), true);
+
+            if (result.v == null) {
+                result.v = 0;
+                return false;
+            }
+
+            return true;
+        },
+
+        equals: function (v1, v2, T) {
+            if (v2 && v2.$boxed && (v1 && v1.$boxed || T)) {
+                if (v2.type !== (v1.type || T)) {
+                    return false;
+                }
+            }
+
+            return System.Enum.equalsT(v1, v2);
+        },
+
+        equalsT: function (v1, v2) {
+            return Bridge.equals(Bridge.unbox(v1, true), Bridge.unbox(v2, true));
+        }
+    };
+
+    Bridge.define("System.Enum", {
+        inherits: [System.IComparable, System.IFormattable],
+        statics: {
+            methods: enumMethods
+        }
     });
 
     // @source Nullable.js
@@ -4428,6 +4774,10 @@
         },
 
         mul: function (a, b) {
+            return Bridge.hasValue$1(a, b) ? a * b : null;
+        },
+
+        imul: function (a, b) {
             return Bridge.hasValue$1(a, b) ? Bridge.Int.mul(a, b) : null;
         },
 
@@ -4611,7 +4961,7 @@
                     return (value >= 48 && value <= 57);
                 }
 
-                return new RegExp("[0-9\u0030-\u0039\u0660-\u0669\u06F0-\u06F9\u07C0-\u07C9\u0966-\u096F\u09E6-\u09EF\u0A66-\u0A6F\u0AE6-\u0AEF\u0B66-\u0B6F\u0BE6-\u0BEF\u0C66-\u0C6F\u0CE6-\u0CEF\u0D66-\u0D6F\u0E50-\u0E59\u0ED0-\u0ED9\u0F20-\u0F29\u1040-\u1049\u1090-\u1099\u17E0-\u17E9\u1810-\u1819\u1946-\u194F\u19D0-\u19D9\u1A80-\u1A89\u1A90-\u1A99\u1B50-\u1B59\u1BB0-\u1BB9\u1C40-\u1C49\u1C50-\u1C59\uA620-\uA629\uA8D0-\uA8D9\uA900-\uA909\uA9D0-\uA9D9\uAA50-\uAA59\uABF0-\uABF9\uFF10-\uFF19]").test(String.fromCharCode(value));
+                return new RegExp(/[0-9\u0030-\u0039\u0660-\u0669\u06F0-\u06F9\u07C0-\u07C9\u0966-\u096F\u09E6-\u09EF\u0A66-\u0A6F\u0AE6-\u0AEF\u0B66-\u0B6F\u0BE6-\u0BEF\u0C66-\u0C6F\u0CE6-\u0CEF\u0D66-\u0D6F\u0E50-\u0E59\u0ED0-\u0ED9\u0F20-\u0F29\u1040-\u1049\u1090-\u1099\u17E0-\u17E9\u1810-\u1819\u1946-\u194F\u19D0-\u19D9\u1A80-\u1A89\u1A90-\u1A99\u1B50-\u1B59\u1BB0-\u1BB9\u1C40-\u1C49\u1C50-\u1C59\uA620-\uA629\uA8D0-\uA8D9\uA900-\uA909\uA9D0-\uA9D9\uAA50-\uAA59\uABF0-\uABF9\uFF10-\uFF19]/).test(String.fromCharCode(value));
             },
 
             isLetter: function (value) {
@@ -4619,19 +4969,19 @@
                     return (value >= 65 && value <= 90) || (value >= 97 && value <= 122);
                 }
 
-                return new RegExp("[A-Za-z\u0061-\u007A\u00B5\u00DF-\u00F6\u00F8-\u00FF\u0101\u0103\u0105\u0107\u0109\u010B\u010D\u010F\u0111\u0113\u0115\u0117\u0119\u011B\u011D\u011F\u0121\u0123\u0125\u0127\u0129\u012B\u012D\u012F\u0131\u0133\u0135\u0137\u0138\u013A\u013C\u013E\u0140\u0142\u0144\u0146\u0148\u0149\u014B\u014D\u014F\u0151\u0153\u0155\u0157\u0159\u015B\u015D\u015F\u0161\u0163\u0165\u0167\u0169\u016B\u016D\u016F\u0171\u0173\u0175\u0177\u017A\u017C\u017E-\u0180\u0183\u0185\u0188\u018C\u018D\u0192\u0195\u0199-\u019B\u019E\u01A1\u01A3\u01A5\u01A8\u01AA\u01AB\u01AD\u01B0\u01B4\u01B6\u01B9\u01BA\u01BD-\u01BF\u01C6\u01C9\u01CC\u01CE\u01D0\u01D2\u01D4\u01D6\u01D8\u01DA\u01DC\u01DD\u01DF\u01E1\u01E3\u01E5\u01E7\u01E9\u01EB\u01ED\u01EF\u01F0\u01F3\u01F5\u01F9\u01FB\u01FD\u01FF\u0201\u0203\u0205\u0207\u0209\u020B\u020D\u020F\u0211\u0213\u0215\u0217\u0219\u021B\u021D\u021F\u0221\u0223\u0225\u0227\u0229\u022B\u022D\u022F\u0231\u0233-\u0239\u023C\u023F\u0240\u0242\u0247\u0249\u024B\u024D\u024F-\u0293\u0295-\u02AF\u0371\u0373\u0377\u037B-\u037D\u0390\u03AC-\u03CE\u03D0\u03D1\u03D5-\u03D7\u03D9\u03DB\u03DD\u03DF\u03E1\u03E3\u03E5\u03E7\u03E9\u03EB\u03ED\u03EF-\u03F3\u03F5\u03F8\u03FB\u03FC\u0430-\u045F\u0461\u0463\u0465\u0467\u0469\u046B\u046D\u046F\u0471\u0473\u0475\u0477\u0479\u047B\u047D\u047F\u0481\u048B\u048D\u048F\u0491\u0493\u0495\u0497\u0499\u049B\u049D\u049F\u04A1\u04A3\u04A5\u04A7\u04A9\u04AB\u04AD\u04AF\u04B1\u04B3\u04B5\u04B7\u04B9\u04BB\u04BD\u04BF\u04C2\u04C4\u04C6\u04C8\u04CA\u04CC\u04CE\u04CF\u04D1\u04D3\u04D5\u04D7\u04D9\u04DB\u04DD\u04DF\u04E1\u04E3\u04E5\u04E7\u04E9\u04EB\u04ED\u04EF\u04F1\u04F3\u04F5\u04F7\u04F9\u04FB\u04FD\u04FF\u0501\u0503\u0505\u0507\u0509\u050B\u050D\u050F\u0511\u0513\u0515\u0517\u0519\u051B\u051D\u051F\u0521\u0523\u0525\u0527\u0561-\u0587\u1D00-\u1D2B\u1D6B-\u1D77\u1D79-\u1D9A\u1E01\u1E03\u1E05\u1E07\u1E09\u1E0B\u1E0D\u1E0F\u1E11\u1E13\u1E15\u1E17\u1E19\u1E1B\u1E1D\u1E1F\u1E21\u1E23\u1E25\u1E27\u1E29\u1E2B\u1E2D\u1E2F\u1E31\u1E33\u1E35\u1E37\u1E39\u1E3B\u1E3D\u1E3F\u1E41\u1E43\u1E45\u1E47\u1E49\u1E4B\u1E4D\u1E4F\u1E51\u1E53\u1E55\u1E57\u1E59\u1E5B\u1E5D\u1E5F\u1E61\u1E63\u1E65\u1E67\u1E69\u1E6B\u1E6D\u1E6F\u1E71\u1E73\u1E75\u1E77\u1E79\u1E7B\u1E7D\u1E7F\u1E81\u1E83\u1E85\u1E87\u1E89\u1E8B\u1E8D\u1E8F\u1E91\u1E93\u1E95-\u1E9D\u1E9F\u1EA1\u1EA3\u1EA5\u1EA7\u1EA9\u1EAB\u1EAD\u1EAF\u1EB1\u1EB3\u1EB5\u1EB7\u1EB9\u1EBB\u1EBD\u1EBF\u1EC1\u1EC3\u1EC5\u1EC7\u1EC9\u1ECB\u1ECD\u1ECF\u1ED1\u1ED3\u1ED5\u1ED7\u1ED9\u1EDB\u1EDD\u1EDF\u1EE1\u1EE3\u1EE5\u1EE7\u1EE9\u1EEB\u1EED\u1EEF\u1EF1\u1EF3\u1EF5\u1EF7\u1EF9\u1EFB\u1EFD\u1EFF-\u1F07\u1F10-\u1F15\u1F20-\u1F27\u1F30-\u1F37\u1F40-\u1F45\u1F50-\u1F57\u1F60-\u1F67\u1F70-\u1F7D\u1F80-\u1F87\u1F90-\u1F97\u1FA0-\u1FA7\u1FB0-\u1FB4\u1FB6\u1FB7\u1FBE\u1FC2-\u1FC4\u1FC6\u1FC7\u1FD0-\u1FD3\u1FD6\u1FD7\u1FE0-\u1FE7\u1FF2-\u1FF4\u1FF6\u1FF7\u210A\u210E\u210F\u2113\u212F\u2134\u2139\u213C\u213D\u2146-\u2149\u214E\u2184\u2C30-\u2C5E\u2C61\u2C65\u2C66\u2C68\u2C6A\u2C6C\u2C71\u2C73\u2C74\u2C76-\u2C7B\u2C81\u2C83\u2C85\u2C87\u2C89\u2C8B\u2C8D\u2C8F\u2C91\u2C93\u2C95\u2C97\u2C99\u2C9B\u2C9D\u2C9F\u2CA1\u2CA3\u2CA5\u2CA7\u2CA9\u2CAB\u2CAD\u2CAF\u2CB1\u2CB3\u2CB5\u2CB7\u2CB9\u2CBB\u2CBD\u2CBF\u2CC1\u2CC3\u2CC5\u2CC7\u2CC9\u2CCB\u2CCD\u2CCF\u2CD1\u2CD3\u2CD5\u2CD7\u2CD9\u2CDB\u2CDD\u2CDF\u2CE1\u2CE3\u2CE4\u2CEC\u2CEE\u2CF3\u2D00-\u2D25\u2D27\u2D2D\uA641\uA643\uA645\uA647\uA649\uA64B\uA64D\uA64F\uA651\uA653\uA655\uA657\uA659\uA65B\uA65D\uA65F\uA661\uA663\uA665\uA667\uA669\uA66B\uA66D\uA681\uA683\uA685\uA687\uA689\uA68B\uA68D\uA68F\uA691\uA693\uA695\uA697\uA723\uA725\uA727\uA729\uA72B\uA72D\uA72F-\uA731\uA733\uA735\uA737\uA739\uA73B\uA73D\uA73F\uA741\uA743\uA745\uA747\uA749\uA74B\uA74D\uA74F\uA751\uA753\uA755\uA757\uA759\uA75B\uA75D\uA75F\uA761\uA763\uA765\uA767\uA769\uA76B\uA76D\uA76F\uA771-\uA778\uA77A\uA77C\uA77F\uA781\uA783\uA785\uA787\uA78C\uA78E\uA791\uA793\uA7A1\uA7A3\uA7A5\uA7A7\uA7A9\uA7FA\uFB00-\uFB06\uFB13-\uFB17\uFF41-\uFF5A\u0041-\u005A\u00C0-\u00D6\u00D8-\u00DE\u0100\u0102\u0104\u0106\u0108\u010A\u010C\u010E\u0110\u0112\u0114\u0116\u0118\u011A\u011C\u011E\u0120\u0122\u0124\u0126\u0128\u012A\u012C\u012E\u0130\u0132\u0134\u0136\u0139\u013B\u013D\u013F\u0141\u0143\u0145\u0147\u014A\u014C\u014E\u0150\u0152\u0154\u0156\u0158\u015A\u015C\u015E\u0160\u0162\u0164\u0166\u0168\u016A\u016C\u016E\u0170\u0172\u0174\u0176\u0178\u0179\u017B\u017D\u0181\u0182\u0184\u0186\u0187\u0189-\u018B\u018E-\u0191\u0193\u0194\u0196-\u0198\u019C\u019D\u019F\u01A0\u01A2\u01A4\u01A6\u01A7\u01A9\u01AC\u01AE\u01AF\u01B1-\u01B3\u01B5\u01B7\u01B8\u01BC\u01C4\u01C7\u01CA\u01CD\u01CF\u01D1\u01D3\u01D5\u01D7\u01D9\u01DB\u01DE\u01E0\u01E2\u01E4\u01E6\u01E8\u01EA\u01EC\u01EE\u01F1\u01F4\u01F6-\u01F8\u01FA\u01FC\u01FE\u0200\u0202\u0204\u0206\u0208\u020A\u020C\u020E\u0210\u0212\u0214\u0216\u0218\u021A\u021C\u021E\u0220\u0222\u0224\u0226\u0228\u022A\u022C\u022E\u0230\u0232\u023A\u023B\u023D\u023E\u0241\u0243-\u0246\u0248\u024A\u024C\u024E\u0370\u0372\u0376\u0386\u0388-\u038A\u038C\u038E\u038F\u0391-\u03A1\u03A3-\u03AB\u03CF\u03D2-\u03D4\u03D8\u03DA\u03DC\u03DE\u03E0\u03E2\u03E4\u03E6\u03E8\u03EA\u03EC\u03EE\u03F4\u03F7\u03F9\u03FA\u03FD-\u042F\u0460\u0462\u0464\u0466\u0468\u046A\u046C\u046E\u0470\u0472\u0474\u0476\u0478\u047A\u047C\u047E\u0480\u048A\u048C\u048E\u0490\u0492\u0494\u0496\u0498\u049A\u049C\u049E\u04A0\u04A2\u04A4\u04A6\u04A8\u04AA\u04AC\u04AE\u04B0\u04B2\u04B4\u04B6\u04B8\u04BA\u04BC\u04BE\u04C0\u04C1\u04C3\u04C5\u04C7\u04C9\u04CB\u04CD\u04D0\u04D2\u04D4\u04D6\u04D8\u04DA\u04DC\u04DE\u04E0\u04E2\u04E4\u04E6\u04E8\u04EA\u04EC\u04EE\u04F0\u04F2\u04F4\u04F6\u04F8\u04FA\u04FC\u04FE\u0500\u0502\u0504\u0506\u0508\u050A\u050C\u050E\u0510\u0512\u0514\u0516\u0518\u051A\u051C\u051E\u0520\u0522\u0524\u0526\u0531-\u0556\u10A0-\u10C5\u10C7\u10CD\u1E00\u1E02\u1E04\u1E06\u1E08\u1E0A\u1E0C\u1E0E\u1E10\u1E12\u1E14\u1E16\u1E18\u1E1A\u1E1C\u1E1E\u1E20\u1E22\u1E24\u1E26\u1E28\u1E2A\u1E2C\u1E2E\u1E30\u1E32\u1E34\u1E36\u1E38\u1E3A\u1E3C\u1E3E\u1E40\u1E42\u1E44\u1E46\u1E48\u1E4A\u1E4C\u1E4E\u1E50\u1E52\u1E54\u1E56\u1E58\u1E5A\u1E5C\u1E5E\u1E60\u1E62\u1E64\u1E66\u1E68\u1E6A\u1E6C\u1E6E\u1E70\u1E72\u1E74\u1E76\u1E78\u1E7A\u1E7C\u1E7E\u1E80\u1E82\u1E84\u1E86\u1E88\u1E8A\u1E8C\u1E8E\u1E90\u1E92\u1E94\u1E9E\u1EA0\u1EA2\u1EA4\u1EA6\u1EA8\u1EAA\u1EAC\u1EAE\u1EB0\u1EB2\u1EB4\u1EB6\u1EB8\u1EBA\u1EBC\u1EBE\u1EC0\u1EC2\u1EC4\u1EC6\u1EC8\u1ECA\u1ECC\u1ECE\u1ED0\u1ED2\u1ED4\u1ED6\u1ED8\u1EDA\u1EDC\u1EDE\u1EE0\u1EE2\u1EE4\u1EE6\u1EE8\u1EEA\u1EEC\u1EEE\u1EF0\u1EF2\u1EF4\u1EF6\u1EF8\u1EFA\u1EFC\u1EFE\u1F08-\u1F0F\u1F18-\u1F1D\u1F28-\u1F2F\u1F38-\u1F3F\u1F48-\u1F4D\u1F59\u1F5B\u1F5D\u1F5F\u1F68-\u1F6F\u1FB8-\u1FBB\u1FC8-\u1FCB\u1FD8-\u1FDB\u1FE8-\u1FEC\u1FF8-\u1FFB\u2102\u2107\u210B-\u210D\u2110-\u2112\u2115\u2119-\u211D\u2124\u2126\u2128\u212A-\u212D\u2130-\u2133\u213E\u213F\u2145\u2183\u2C00-\u2C2E\u2C60\u2C62-\u2C64\u2C67\u2C69\u2C6B\u2C6D-\u2C70\u2C72\u2C75\u2C7E-\u2C80\u2C82\u2C84\u2C86\u2C88\u2C8A\u2C8C\u2C8E\u2C90\u2C92\u2C94\u2C96\u2C98\u2C9A\u2C9C\u2C9E\u2CA0\u2CA2\u2CA4\u2CA6\u2CA8\u2CAA\u2CAC\u2CAE\u2CB0\u2CB2\u2CB4\u2CB6\u2CB8\u2CBA\u2CBC\u2CBE\u2CC0\u2CC2\u2CC4\u2CC6\u2CC8\u2CCA\u2CCC\u2CCE\u2CD0\u2CD2\u2CD4\u2CD6\u2CD8\u2CDA\u2CDC\u2CDE\u2CE0\u2CE2\u2CEB\u2CED\u2CF2\uA640\uA642\uA644\uA646\uA648\uA64A\uA64C\uA64E\uA650\uA652\uA654\uA656\uA658\uA65A\uA65C\uA65E\uA660\uA662\uA664\uA666\uA668\uA66A\uA66C\uA680\uA682\uA684\uA686\uA688\uA68A\uA68C\uA68E\uA690\uA692\uA694\uA696\uA722\uA724\uA726\uA728\uA72A\uA72C\uA72E\uA732\uA734\uA736\uA738\uA73A\uA73C\uA73E\uA740\uA742\uA744\uA746\uA748\uA74A\uA74C\uA74E\uA750\uA752\uA754\uA756\uA758\uA75A\uA75C\uA75E\uA760\uA762\uA764\uA766\uA768\uA76A\uA76C\uA76E\uA779\uA77B\uA77D\uA77E\uA780\uA782\uA784\uA786\uA78B\uA78D\uA790\uA792\uA7A0\uA7A2\uA7A4\uA7A6\uA7A8\uA7AA\uFF21-\uFF3A\u01C5\u01C8\u01CB\u01F2\u1F88-\u1F8F\u1F98-\u1F9F\u1FA8-\u1FAF\u1FBC\u1FCC\u1FFC\u02B0-\u02C1\u02C6-\u02D1\u02E0-\u02E4\u02EC\u02EE\u0374\u037A\u0559\u0640\u06E5\u06E6\u07F4\u07F5\u07FA\u081A\u0824\u0828\u0971\u0E46\u0EC6\u10FC\u17D7\u1843\u1AA7\u1C78-\u1C7D\u1D2C-\u1D6A\u1D78\u1D9B-\u1DBF\u2071\u207F\u2090-\u209C\u2C7C\u2C7D\u2D6F\u2E2F\u3005\u3031-\u3035\u303B\u309D\u309E\u30FC-\u30FE\uA015\uA4F8-\uA4FD\uA60C\uA67F\uA717-\uA71F\uA770\uA788\uA7F8\uA7F9\uA9CF\uAA70\uAADD\uAAF3\uAAF4\uFF70\uFF9E\uFF9F\u00AA\u00BA\u01BB\u01C0-\u01C3\u0294\u05D0-\u05EA\u05F0-\u05F2\u0620-\u063F\u0641-\u064A\u066E\u066F\u0671-\u06D3\u06D5\u06EE\u06EF\u06FA-\u06FC\u06FF\u0710\u0712-\u072F\u074D-\u07A5\u07B1\u07CA-\u07EA\u0800-\u0815\u0840-\u0858\u08A0\u08A2-\u08AC\u0904-\u0939\u093D\u0950\u0958-\u0961\u0972-\u0977\u0979-\u097F\u0985-\u098C\u098F\u0990\u0993-\u09A8\u09AA-\u09B0\u09B2\u09B6-\u09B9\u09BD\u09CE\u09DC\u09DD\u09DF-\u09E1\u09F0\u09F1\u0A05-\u0A0A\u0A0F\u0A10\u0A13-\u0A28\u0A2A-\u0A30\u0A32\u0A33\u0A35\u0A36\u0A38\u0A39\u0A59-\u0A5C\u0A5E\u0A72-\u0A74\u0A85-\u0A8D\u0A8F-\u0A91\u0A93-\u0AA8\u0AAA-\u0AB0\u0AB2\u0AB3\u0AB5-\u0AB9\u0ABD\u0AD0\u0AE0\u0AE1\u0B05-\u0B0C\u0B0F\u0B10\u0B13-\u0B28\u0B2A-\u0B30\u0B32\u0B33\u0B35-\u0B39\u0B3D\u0B5C\u0B5D\u0B5F-\u0B61\u0B71\u0B83\u0B85-\u0B8A\u0B8E-\u0B90\u0B92-\u0B95\u0B99\u0B9A\u0B9C\u0B9E\u0B9F\u0BA3\u0BA4\u0BA8-\u0BAA\u0BAE-\u0BB9\u0BD0\u0C05-\u0C0C\u0C0E-\u0C10\u0C12-\u0C28\u0C2A-\u0C33\u0C35-\u0C39\u0C3D\u0C58\u0C59\u0C60\u0C61\u0C85-\u0C8C\u0C8E-\u0C90\u0C92-\u0CA8\u0CAA-\u0CB3\u0CB5-\u0CB9\u0CBD\u0CDE\u0CE0\u0CE1\u0CF1\u0CF2\u0D05-\u0D0C\u0D0E-\u0D10\u0D12-\u0D3A\u0D3D\u0D4E\u0D60\u0D61\u0D7A-\u0D7F\u0D85-\u0D96\u0D9A-\u0DB1\u0DB3-\u0DBB\u0DBD\u0DC0-\u0DC6\u0E01-\u0E30\u0E32\u0E33\u0E40-\u0E45\u0E81\u0E82\u0E84\u0E87\u0E88\u0E8A\u0E8D\u0E94-\u0E97\u0E99-\u0E9F\u0EA1-\u0EA3\u0EA5\u0EA7\u0EAA\u0EAB\u0EAD-\u0EB0\u0EB2\u0EB3\u0EBD\u0EC0-\u0EC4\u0EDC-\u0EDF\u0F00\u0F40-\u0F47\u0F49-\u0F6C\u0F88-\u0F8C\u1000-\u102A\u103F\u1050-\u1055\u105A-\u105D\u1061\u1065\u1066\u106E-\u1070\u1075-\u1081\u108E\u10D0-\u10FA\u10FD-\u1248\u124A-\u124D\u1250-\u1256\u1258\u125A-\u125D\u1260-\u1288\u128A-\u128D\u1290-\u12B0\u12B2-\u12B5\u12B8-\u12BE\u12C0\u12C2-\u12C5\u12C8-\u12D6\u12D8-\u1310\u1312-\u1315\u1318-\u135A\u1380-\u138F\u13A0-\u13F4\u1401-\u166C\u166F-\u167F\u1681-\u169A\u16A0-\u16EA\u1700-\u170C\u170E-\u1711\u1720-\u1731\u1740-\u1751\u1760-\u176C\u176E-\u1770\u1780-\u17B3\u17DC\u1820-\u1842\u1844-\u1877\u1880-\u18A8\u18AA\u18B0-\u18F5\u1900-\u191C\u1950-\u196D\u1970-\u1974\u1980-\u19AB\u19C1-\u19C7\u1A00-\u1A16\u1A20-\u1A54\u1B05-\u1B33\u1B45-\u1B4B\u1B83-\u1BA0\u1BAE\u1BAF\u1BBA-\u1BE5\u1C00-\u1C23\u1C4D-\u1C4F\u1C5A-\u1C77\u1CE9-\u1CEC\u1CEE-\u1CF1\u1CF5\u1CF6\u2135-\u2138\u2D30-\u2D67\u2D80-\u2D96\u2DA0-\u2DA6\u2DA8-\u2DAE\u2DB0-\u2DB6\u2DB8-\u2DBE\u2DC0-\u2DC6\u2DC8-\u2DCE\u2DD0-\u2DD6\u2DD8-\u2DDE\u3006\u303C\u3041-\u3096\u309F\u30A1-\u30FA\u30FF\u3105-\u312D\u3131-\u318E\u31A0-\u31BA\u31F0-\u31FF\u3400-\u4DB5\u4E00-\u9FCC\uA000-\uA014\uA016-\uA48C\uA4D0-\uA4F7\uA500-\uA60B\uA610-\uA61F\uA62A\uA62B\uA66E\uA6A0-\uA6E5\uA7FB-\uA801\uA803-\uA805\uA807-\uA80A\uA80C-\uA822\uA840-\uA873\uA882-\uA8B3\uA8F2-\uA8F7\uA8FB\uA90A-\uA925\uA930-\uA946\uA960-\uA97C\uA984-\uA9B2\uAA00-\uAA28\uAA40-\uAA42\uAA44-\uAA4B\uAA60-\uAA6F\uAA71-\uAA76\uAA7A\uAA80-\uAAAF\uAAB1\uAAB5\uAAB6\uAAB9-\uAABD\uAAC0\uAAC2\uAADB\uAADC\uAAE0-\uAAEA\uAAF2\uAB01-\uAB06\uAB09-\uAB0E\uAB11-\uAB16\uAB20-\uAB26\uAB28-\uAB2E\uABC0-\uABE2\uAC00-\uD7A3\uD7B0-\uD7C6\uD7CB-\uD7FB\uF900-\uFA6D\uFA70-\uFAD9\uFB1D\uFB1F-\uFB28\uFB2A-\uFB36\uFB38-\uFB3C\uFB3E\uFB40\uFB41\uFB43\uFB44\uFB46-\uFBB1\uFBD3-\uFD3D\uFD50-\uFD8F\uFD92-\uFDC7\uFDF0-\uFDFB\uFE70-\uFE74\uFE76-\uFEFC\uFF66-\uFF6F\uFF71-\uFF9D\uFFA0-\uFFBE\uFFC2-\uFFC7\uFFCA-\uFFCF\uFFD2-\uFFD7\uFFDA-\uFFDC]").test(String.fromCharCode(value));
+                return new RegExp(/[A-Za-z\u0061-\u007A\u00B5\u00DF-\u00F6\u00F8-\u00FF\u0101\u0103\u0105\u0107\u0109\u010B\u010D\u010F\u0111\u0113\u0115\u0117\u0119\u011B\u011D\u011F\u0121\u0123\u0125\u0127\u0129\u012B\u012D\u012F\u0131\u0133\u0135\u0137\u0138\u013A\u013C\u013E\u0140\u0142\u0144\u0146\u0148\u0149\u014B\u014D\u014F\u0151\u0153\u0155\u0157\u0159\u015B\u015D\u015F\u0161\u0163\u0165\u0167\u0169\u016B\u016D\u016F\u0171\u0173\u0175\u0177\u017A\u017C\u017E-\u0180\u0183\u0185\u0188\u018C\u018D\u0192\u0195\u0199-\u019B\u019E\u01A1\u01A3\u01A5\u01A8\u01AA\u01AB\u01AD\u01B0\u01B4\u01B6\u01B9\u01BA\u01BD-\u01BF\u01C6\u01C9\u01CC\u01CE\u01D0\u01D2\u01D4\u01D6\u01D8\u01DA\u01DC\u01DD\u01DF\u01E1\u01E3\u01E5\u01E7\u01E9\u01EB\u01ED\u01EF\u01F0\u01F3\u01F5\u01F9\u01FB\u01FD\u01FF\u0201\u0203\u0205\u0207\u0209\u020B\u020D\u020F\u0211\u0213\u0215\u0217\u0219\u021B\u021D\u021F\u0221\u0223\u0225\u0227\u0229\u022B\u022D\u022F\u0231\u0233-\u0239\u023C\u023F\u0240\u0242\u0247\u0249\u024B\u024D\u024F-\u0293\u0295-\u02AF\u0371\u0373\u0377\u037B-\u037D\u0390\u03AC-\u03CE\u03D0\u03D1\u03D5-\u03D7\u03D9\u03DB\u03DD\u03DF\u03E1\u03E3\u03E5\u03E7\u03E9\u03EB\u03ED\u03EF-\u03F3\u03F5\u03F8\u03FB\u03FC\u0430-\u045F\u0461\u0463\u0465\u0467\u0469\u046B\u046D\u046F\u0471\u0473\u0475\u0477\u0479\u047B\u047D\u047F\u0481\u048B\u048D\u048F\u0491\u0493\u0495\u0497\u0499\u049B\u049D\u049F\u04A1\u04A3\u04A5\u04A7\u04A9\u04AB\u04AD\u04AF\u04B1\u04B3\u04B5\u04B7\u04B9\u04BB\u04BD\u04BF\u04C2\u04C4\u04C6\u04C8\u04CA\u04CC\u04CE\u04CF\u04D1\u04D3\u04D5\u04D7\u04D9\u04DB\u04DD\u04DF\u04E1\u04E3\u04E5\u04E7\u04E9\u04EB\u04ED\u04EF\u04F1\u04F3\u04F5\u04F7\u04F9\u04FB\u04FD\u04FF\u0501\u0503\u0505\u0507\u0509\u050B\u050D\u050F\u0511\u0513\u0515\u0517\u0519\u051B\u051D\u051F\u0521\u0523\u0525\u0527\u0561-\u0587\u1D00-\u1D2B\u1D6B-\u1D77\u1D79-\u1D9A\u1E01\u1E03\u1E05\u1E07\u1E09\u1E0B\u1E0D\u1E0F\u1E11\u1E13\u1E15\u1E17\u1E19\u1E1B\u1E1D\u1E1F\u1E21\u1E23\u1E25\u1E27\u1E29\u1E2B\u1E2D\u1E2F\u1E31\u1E33\u1E35\u1E37\u1E39\u1E3B\u1E3D\u1E3F\u1E41\u1E43\u1E45\u1E47\u1E49\u1E4B\u1E4D\u1E4F\u1E51\u1E53\u1E55\u1E57\u1E59\u1E5B\u1E5D\u1E5F\u1E61\u1E63\u1E65\u1E67\u1E69\u1E6B\u1E6D\u1E6F\u1E71\u1E73\u1E75\u1E77\u1E79\u1E7B\u1E7D\u1E7F\u1E81\u1E83\u1E85\u1E87\u1E89\u1E8B\u1E8D\u1E8F\u1E91\u1E93\u1E95-\u1E9D\u1E9F\u1EA1\u1EA3\u1EA5\u1EA7\u1EA9\u1EAB\u1EAD\u1EAF\u1EB1\u1EB3\u1EB5\u1EB7\u1EB9\u1EBB\u1EBD\u1EBF\u1EC1\u1EC3\u1EC5\u1EC7\u1EC9\u1ECB\u1ECD\u1ECF\u1ED1\u1ED3\u1ED5\u1ED7\u1ED9\u1EDB\u1EDD\u1EDF\u1EE1\u1EE3\u1EE5\u1EE7\u1EE9\u1EEB\u1EED\u1EEF\u1EF1\u1EF3\u1EF5\u1EF7\u1EF9\u1EFB\u1EFD\u1EFF-\u1F07\u1F10-\u1F15\u1F20-\u1F27\u1F30-\u1F37\u1F40-\u1F45\u1F50-\u1F57\u1F60-\u1F67\u1F70-\u1F7D\u1F80-\u1F87\u1F90-\u1F97\u1FA0-\u1FA7\u1FB0-\u1FB4\u1FB6\u1FB7\u1FBE\u1FC2-\u1FC4\u1FC6\u1FC7\u1FD0-\u1FD3\u1FD6\u1FD7\u1FE0-\u1FE7\u1FF2-\u1FF4\u1FF6\u1FF7\u210A\u210E\u210F\u2113\u212F\u2134\u2139\u213C\u213D\u2146-\u2149\u214E\u2184\u2C30-\u2C5E\u2C61\u2C65\u2C66\u2C68\u2C6A\u2C6C\u2C71\u2C73\u2C74\u2C76-\u2C7B\u2C81\u2C83\u2C85\u2C87\u2C89\u2C8B\u2C8D\u2C8F\u2C91\u2C93\u2C95\u2C97\u2C99\u2C9B\u2C9D\u2C9F\u2CA1\u2CA3\u2CA5\u2CA7\u2CA9\u2CAB\u2CAD\u2CAF\u2CB1\u2CB3\u2CB5\u2CB7\u2CB9\u2CBB\u2CBD\u2CBF\u2CC1\u2CC3\u2CC5\u2CC7\u2CC9\u2CCB\u2CCD\u2CCF\u2CD1\u2CD3\u2CD5\u2CD7\u2CD9\u2CDB\u2CDD\u2CDF\u2CE1\u2CE3\u2CE4\u2CEC\u2CEE\u2CF3\u2D00-\u2D25\u2D27\u2D2D\uA641\uA643\uA645\uA647\uA649\uA64B\uA64D\uA64F\uA651\uA653\uA655\uA657\uA659\uA65B\uA65D\uA65F\uA661\uA663\uA665\uA667\uA669\uA66B\uA66D\uA681\uA683\uA685\uA687\uA689\uA68B\uA68D\uA68F\uA691\uA693\uA695\uA697\uA723\uA725\uA727\uA729\uA72B\uA72D\uA72F-\uA731\uA733\uA735\uA737\uA739\uA73B\uA73D\uA73F\uA741\uA743\uA745\uA747\uA749\uA74B\uA74D\uA74F\uA751\uA753\uA755\uA757\uA759\uA75B\uA75D\uA75F\uA761\uA763\uA765\uA767\uA769\uA76B\uA76D\uA76F\uA771-\uA778\uA77A\uA77C\uA77F\uA781\uA783\uA785\uA787\uA78C\uA78E\uA791\uA793\uA7A1\uA7A3\uA7A5\uA7A7\uA7A9\uA7FA\uFB00-\uFB06\uFB13-\uFB17\uFF41-\uFF5A\u0041-\u005A\u00C0-\u00D6\u00D8-\u00DE\u0100\u0102\u0104\u0106\u0108\u010A\u010C\u010E\u0110\u0112\u0114\u0116\u0118\u011A\u011C\u011E\u0120\u0122\u0124\u0126\u0128\u012A\u012C\u012E\u0130\u0132\u0134\u0136\u0139\u013B\u013D\u013F\u0141\u0143\u0145\u0147\u014A\u014C\u014E\u0150\u0152\u0154\u0156\u0158\u015A\u015C\u015E\u0160\u0162\u0164\u0166\u0168\u016A\u016C\u016E\u0170\u0172\u0174\u0176\u0178\u0179\u017B\u017D\u0181\u0182\u0184\u0186\u0187\u0189-\u018B\u018E-\u0191\u0193\u0194\u0196-\u0198\u019C\u019D\u019F\u01A0\u01A2\u01A4\u01A6\u01A7\u01A9\u01AC\u01AE\u01AF\u01B1-\u01B3\u01B5\u01B7\u01B8\u01BC\u01C4\u01C7\u01CA\u01CD\u01CF\u01D1\u01D3\u01D5\u01D7\u01D9\u01DB\u01DE\u01E0\u01E2\u01E4\u01E6\u01E8\u01EA\u01EC\u01EE\u01F1\u01F4\u01F6-\u01F8\u01FA\u01FC\u01FE\u0200\u0202\u0204\u0206\u0208\u020A\u020C\u020E\u0210\u0212\u0214\u0216\u0218\u021A\u021C\u021E\u0220\u0222\u0224\u0226\u0228\u022A\u022C\u022E\u0230\u0232\u023A\u023B\u023D\u023E\u0241\u0243-\u0246\u0248\u024A\u024C\u024E\u0370\u0372\u0376\u0386\u0388-\u038A\u038C\u038E\u038F\u0391-\u03A1\u03A3-\u03AB\u03CF\u03D2-\u03D4\u03D8\u03DA\u03DC\u03DE\u03E0\u03E2\u03E4\u03E6\u03E8\u03EA\u03EC\u03EE\u03F4\u03F7\u03F9\u03FA\u03FD-\u042F\u0460\u0462\u0464\u0466\u0468\u046A\u046C\u046E\u0470\u0472\u0474\u0476\u0478\u047A\u047C\u047E\u0480\u048A\u048C\u048E\u0490\u0492\u0494\u0496\u0498\u049A\u049C\u049E\u04A0\u04A2\u04A4\u04A6\u04A8\u04AA\u04AC\u04AE\u04B0\u04B2\u04B4\u04B6\u04B8\u04BA\u04BC\u04BE\u04C0\u04C1\u04C3\u04C5\u04C7\u04C9\u04CB\u04CD\u04D0\u04D2\u04D4\u04D6\u04D8\u04DA\u04DC\u04DE\u04E0\u04E2\u04E4\u04E6\u04E8\u04EA\u04EC\u04EE\u04F0\u04F2\u04F4\u04F6\u04F8\u04FA\u04FC\u04FE\u0500\u0502\u0504\u0506\u0508\u050A\u050C\u050E\u0510\u0512\u0514\u0516\u0518\u051A\u051C\u051E\u0520\u0522\u0524\u0526\u0531-\u0556\u10A0-\u10C5\u10C7\u10CD\u1E00\u1E02\u1E04\u1E06\u1E08\u1E0A\u1E0C\u1E0E\u1E10\u1E12\u1E14\u1E16\u1E18\u1E1A\u1E1C\u1E1E\u1E20\u1E22\u1E24\u1E26\u1E28\u1E2A\u1E2C\u1E2E\u1E30\u1E32\u1E34\u1E36\u1E38\u1E3A\u1E3C\u1E3E\u1E40\u1E42\u1E44\u1E46\u1E48\u1E4A\u1E4C\u1E4E\u1E50\u1E52\u1E54\u1E56\u1E58\u1E5A\u1E5C\u1E5E\u1E60\u1E62\u1E64\u1E66\u1E68\u1E6A\u1E6C\u1E6E\u1E70\u1E72\u1E74\u1E76\u1E78\u1E7A\u1E7C\u1E7E\u1E80\u1E82\u1E84\u1E86\u1E88\u1E8A\u1E8C\u1E8E\u1E90\u1E92\u1E94\u1E9E\u1EA0\u1EA2\u1EA4\u1EA6\u1EA8\u1EAA\u1EAC\u1EAE\u1EB0\u1EB2\u1EB4\u1EB6\u1EB8\u1EBA\u1EBC\u1EBE\u1EC0\u1EC2\u1EC4\u1EC6\u1EC8\u1ECA\u1ECC\u1ECE\u1ED0\u1ED2\u1ED4\u1ED6\u1ED8\u1EDA\u1EDC\u1EDE\u1EE0\u1EE2\u1EE4\u1EE6\u1EE8\u1EEA\u1EEC\u1EEE\u1EF0\u1EF2\u1EF4\u1EF6\u1EF8\u1EFA\u1EFC\u1EFE\u1F08-\u1F0F\u1F18-\u1F1D\u1F28-\u1F2F\u1F38-\u1F3F\u1F48-\u1F4D\u1F59\u1F5B\u1F5D\u1F5F\u1F68-\u1F6F\u1FB8-\u1FBB\u1FC8-\u1FCB\u1FD8-\u1FDB\u1FE8-\u1FEC\u1FF8-\u1FFB\u2102\u2107\u210B-\u210D\u2110-\u2112\u2115\u2119-\u211D\u2124\u2126\u2128\u212A-\u212D\u2130-\u2133\u213E\u213F\u2145\u2183\u2C00-\u2C2E\u2C60\u2C62-\u2C64\u2C67\u2C69\u2C6B\u2C6D-\u2C70\u2C72\u2C75\u2C7E-\u2C80\u2C82\u2C84\u2C86\u2C88\u2C8A\u2C8C\u2C8E\u2C90\u2C92\u2C94\u2C96\u2C98\u2C9A\u2C9C\u2C9E\u2CA0\u2CA2\u2CA4\u2CA6\u2CA8\u2CAA\u2CAC\u2CAE\u2CB0\u2CB2\u2CB4\u2CB6\u2CB8\u2CBA\u2CBC\u2CBE\u2CC0\u2CC2\u2CC4\u2CC6\u2CC8\u2CCA\u2CCC\u2CCE\u2CD0\u2CD2\u2CD4\u2CD6\u2CD8\u2CDA\u2CDC\u2CDE\u2CE0\u2CE2\u2CEB\u2CED\u2CF2\uA640\uA642\uA644\uA646\uA648\uA64A\uA64C\uA64E\uA650\uA652\uA654\uA656\uA658\uA65A\uA65C\uA65E\uA660\uA662\uA664\uA666\uA668\uA66A\uA66C\uA680\uA682\uA684\uA686\uA688\uA68A\uA68C\uA68E\uA690\uA692\uA694\uA696\uA722\uA724\uA726\uA728\uA72A\uA72C\uA72E\uA732\uA734\uA736\uA738\uA73A\uA73C\uA73E\uA740\uA742\uA744\uA746\uA748\uA74A\uA74C\uA74E\uA750\uA752\uA754\uA756\uA758\uA75A\uA75C\uA75E\uA760\uA762\uA764\uA766\uA768\uA76A\uA76C\uA76E\uA779\uA77B\uA77D\uA77E\uA780\uA782\uA784\uA786\uA78B\uA78D\uA790\uA792\uA7A0\uA7A2\uA7A4\uA7A6\uA7A8\uA7AA\uFF21-\uFF3A\u01C5\u01C8\u01CB\u01F2\u1F88-\u1F8F\u1F98-\u1F9F\u1FA8-\u1FAF\u1FBC\u1FCC\u1FFC\u02B0-\u02C1\u02C6-\u02D1\u02E0-\u02E4\u02EC\u02EE\u0374\u037A\u0559\u0640\u06E5\u06E6\u07F4\u07F5\u07FA\u081A\u0824\u0828\u0971\u0E46\u0EC6\u10FC\u17D7\u1843\u1AA7\u1C78-\u1C7D\u1D2C-\u1D6A\u1D78\u1D9B-\u1DBF\u2071\u207F\u2090-\u209C\u2C7C\u2C7D\u2D6F\u2E2F\u3005\u3031-\u3035\u303B\u309D\u309E\u30FC-\u30FE\uA015\uA4F8-\uA4FD\uA60C\uA67F\uA717-\uA71F\uA770\uA788\uA7F8\uA7F9\uA9CF\uAA70\uAADD\uAAF3\uAAF4\uFF70\uFF9E\uFF9F\u00AA\u00BA\u01BB\u01C0-\u01C3\u0294\u05D0-\u05EA\u05F0-\u05F2\u0620-\u063F\u0641-\u064A\u066E\u066F\u0671-\u06D3\u06D5\u06EE\u06EF\u06FA-\u06FC\u06FF\u0710\u0712-\u072F\u074D-\u07A5\u07B1\u07CA-\u07EA\u0800-\u0815\u0840-\u0858\u08A0\u08A2-\u08AC\u0904-\u0939\u093D\u0950\u0958-\u0961\u0972-\u0977\u0979-\u097F\u0985-\u098C\u098F\u0990\u0993-\u09A8\u09AA-\u09B0\u09B2\u09B6-\u09B9\u09BD\u09CE\u09DC\u09DD\u09DF-\u09E1\u09F0\u09F1\u0A05-\u0A0A\u0A0F\u0A10\u0A13-\u0A28\u0A2A-\u0A30\u0A32\u0A33\u0A35\u0A36\u0A38\u0A39\u0A59-\u0A5C\u0A5E\u0A72-\u0A74\u0A85-\u0A8D\u0A8F-\u0A91\u0A93-\u0AA8\u0AAA-\u0AB0\u0AB2\u0AB3\u0AB5-\u0AB9\u0ABD\u0AD0\u0AE0\u0AE1\u0B05-\u0B0C\u0B0F\u0B10\u0B13-\u0B28\u0B2A-\u0B30\u0B32\u0B33\u0B35-\u0B39\u0B3D\u0B5C\u0B5D\u0B5F-\u0B61\u0B71\u0B83\u0B85-\u0B8A\u0B8E-\u0B90\u0B92-\u0B95\u0B99\u0B9A\u0B9C\u0B9E\u0B9F\u0BA3\u0BA4\u0BA8-\u0BAA\u0BAE-\u0BB9\u0BD0\u0C05-\u0C0C\u0C0E-\u0C10\u0C12-\u0C28\u0C2A-\u0C33\u0C35-\u0C39\u0C3D\u0C58\u0C59\u0C60\u0C61\u0C85-\u0C8C\u0C8E-\u0C90\u0C92-\u0CA8\u0CAA-\u0CB3\u0CB5-\u0CB9\u0CBD\u0CDE\u0CE0\u0CE1\u0CF1\u0CF2\u0D05-\u0D0C\u0D0E-\u0D10\u0D12-\u0D3A\u0D3D\u0D4E\u0D60\u0D61\u0D7A-\u0D7F\u0D85-\u0D96\u0D9A-\u0DB1\u0DB3-\u0DBB\u0DBD\u0DC0-\u0DC6\u0E01-\u0E30\u0E32\u0E33\u0E40-\u0E45\u0E81\u0E82\u0E84\u0E87\u0E88\u0E8A\u0E8D\u0E94-\u0E97\u0E99-\u0E9F\u0EA1-\u0EA3\u0EA5\u0EA7\u0EAA\u0EAB\u0EAD-\u0EB0\u0EB2\u0EB3\u0EBD\u0EC0-\u0EC4\u0EDC-\u0EDF\u0F00\u0F40-\u0F47\u0F49-\u0F6C\u0F88-\u0F8C\u1000-\u102A\u103F\u1050-\u1055\u105A-\u105D\u1061\u1065\u1066\u106E-\u1070\u1075-\u1081\u108E\u10D0-\u10FA\u10FD-\u1248\u124A-\u124D\u1250-\u1256\u1258\u125A-\u125D\u1260-\u1288\u128A-\u128D\u1290-\u12B0\u12B2-\u12B5\u12B8-\u12BE\u12C0\u12C2-\u12C5\u12C8-\u12D6\u12D8-\u1310\u1312-\u1315\u1318-\u135A\u1380-\u138F\u13A0-\u13F4\u1401-\u166C\u166F-\u167F\u1681-\u169A\u16A0-\u16EA\u1700-\u170C\u170E-\u1711\u1720-\u1731\u1740-\u1751\u1760-\u176C\u176E-\u1770\u1780-\u17B3\u17DC\u1820-\u1842\u1844-\u1877\u1880-\u18A8\u18AA\u18B0-\u18F5\u1900-\u191C\u1950-\u196D\u1970-\u1974\u1980-\u19AB\u19C1-\u19C7\u1A00-\u1A16\u1A20-\u1A54\u1B05-\u1B33\u1B45-\u1B4B\u1B83-\u1BA0\u1BAE\u1BAF\u1BBA-\u1BE5\u1C00-\u1C23\u1C4D-\u1C4F\u1C5A-\u1C77\u1CE9-\u1CEC\u1CEE-\u1CF1\u1CF5\u1CF6\u2135-\u2138\u2D30-\u2D67\u2D80-\u2D96\u2DA0-\u2DA6\u2DA8-\u2DAE\u2DB0-\u2DB6\u2DB8-\u2DBE\u2DC0-\u2DC6\u2DC8-\u2DCE\u2DD0-\u2DD6\u2DD8-\u2DDE\u3006\u303C\u3041-\u3096\u309F\u30A1-\u30FA\u30FF\u3105-\u312D\u3131-\u318E\u31A0-\u31BA\u31F0-\u31FF\u3400-\u4DB5\u4E00-\u9FCC\uA000-\uA014\uA016-\uA48C\uA4D0-\uA4F7\uA500-\uA60B\uA610-\uA61F\uA62A\uA62B\uA66E\uA6A0-\uA6E5\uA7FB-\uA801\uA803-\uA805\uA807-\uA80A\uA80C-\uA822\uA840-\uA873\uA882-\uA8B3\uA8F2-\uA8F7\uA8FB\uA90A-\uA925\uA930-\uA946\uA960-\uA97C\uA984-\uA9B2\uAA00-\uAA28\uAA40-\uAA42\uAA44-\uAA4B\uAA60-\uAA6F\uAA71-\uAA76\uAA7A\uAA80-\uAAAF\uAAB1\uAAB5\uAAB6\uAAB9-\uAABD\uAAC0\uAAC2\uAADB\uAADC\uAAE0-\uAAEA\uAAF2\uAB01-\uAB06\uAB09-\uAB0E\uAB11-\uAB16\uAB20-\uAB26\uAB28-\uAB2E\uABC0-\uABE2\uAC00-\uD7A3\uD7B0-\uD7C6\uD7CB-\uD7FB\uF900-\uFA6D\uFA70-\uFAD9\uFB1D\uFB1F-\uFB28\uFB2A-\uFB36\uFB38-\uFB3C\uFB3E\uFB40\uFB41\uFB43\uFB44\uFB46-\uFBB1\uFBD3-\uFD3D\uFD50-\uFD8F\uFD92-\uFDC7\uFDF0-\uFDFB\uFE70-\uFE74\uFE76-\uFEFC\uFF66-\uFF6F\uFF71-\uFF9D\uFFA0-\uFFBE\uFFC2-\uFFC7\uFFCA-\uFFCF\uFFD2-\uFFD7\uFFDA-\uFFDC]/).test(String.fromCharCode(value));
             },
 
             isHighSurrogate: function (value) {
-                return new RegExp("[\uD800-\uDBFF]").test(String.fromCharCode(value));
+                return new RegExp(/[\uD800-\uDBFF]/).test(String.fromCharCode(value));
             },
 
             isLowSurrogate: function (value) {
-                return new RegExp("[\uDC00-\uDFFF]").test(String.fromCharCode(value));
+                return new RegExp(/[\uDC00-\uDFFF]/).test(String.fromCharCode(value));
             },
 
             isSurrogate: function (value) {
-                return new RegExp("[\uD800-\uDFFF]").test(String.fromCharCode(value));
+                return new RegExp(/[\uD800-\uDFFF]/).test(String.fromCharCode(value));
             },
 
             isNull: function (value) {
@@ -4643,7 +4993,7 @@
                     return ([36, 43, 60, 61, 62, 94, 96, 124, 126, 162, 163, 164, 165, 166, 167, 168, 169, 172, 174, 175, 176, 177, 180, 182, 184, 215, 247].indexOf(value) != -1);
                 }
 
-                return new RegExp("[\u20A0-\u20CF\u20D0-\u20FF\u2100-\u214F\u2150-\u218F\u2190-\u21FF\u2200-\u22FF\u2300-\u23FF\u25A0-\u25FF\u2600-\u26FF\u2700-\u27BF\u27C0-\u27EF\u27F0-\u27FF\u2800-\u28FF\u2900-\u297F\u2980-\u29FF\u2A00-\u2AFF\u2B00-\u2BFF]").test(String.fromCharCode(value));
+                return new RegExp(/[\u20A0-\u20CF\u20D0-\u20FF\u2100-\u214F\u2150-\u218F\u2190-\u21FF\u2200-\u22FF\u2300-\u23FF\u25A0-\u25FF\u2600-\u26FF\u2700-\u27BF\u27C0-\u27EF\u27F0-\u27FF\u2800-\u28FF\u2900-\u297F\u2980-\u29FF\u2A00-\u2AFF\u2B00-\u2BFF]/).test(String.fromCharCode(value));
             },
 
             isSeparator: function (value) {
@@ -4651,7 +5001,7 @@
                     return (value == 32 || value == 160);
                 }
 
-                return new RegExp("[\u2028\u2029\u0020\u00A0\u1680\u180E\u2000-\u200A\u202F\u205F\u3000]").test(String.fromCharCode(value));
+                return new RegExp(/[\u2028\u2029\u0020\u00A0\u1680\u180E\u2000-\u200A\u202F\u205F\u3000]/).test(String.fromCharCode(value));
             },
 
             isPunctuation: function (value) {
@@ -4659,7 +5009,7 @@
                     return ([33, 34, 35, 37, 38, 39, 40, 41, 42, 44, 45, 46, 47, 58, 59, 63, 64, 91, 92, 93, 95, 123, 125, 161, 171, 173, 183, 187, 191].indexOf(value) != -1);
                 }
 
-                return new RegExp("[\u0021-\u0023\u0025-\u002A\u002C-\u002F\u003A\u003B\u003F\u0040\u005B-\u005D\u005F\u007B\u007D\u00A1\u00A7\u00AB\u00B6\u00B7\u00BB\u00BF\u037E\u0387\u055A-\u055F\u0589\u058A\u05BE\u05C0\u05C3\u05C6\u05F3\u05F4\u0609\u060A\u060C\u060D\u061B\u061E\u061F\u066A-\u066D\u06D4\u0700-\u070D\u07F7-\u07F9\u0830-\u083E\u085E\u0964\u0965\u0970\u0AF0\u0DF4\u0E4F\u0E5A\u0E5B\u0F04-\u0F12\u0F14\u0F3A-\u0F3D\u0F85\u0FD0-\u0FD4\u0FD9\u0FDA\u104A-\u104F\u10FB\u1360-\u1368\u1400\u166D\u166E\u169B\u169C\u16EB-\u16ED\u1735\u1736\u17D4-\u17D6\u17D8-\u17DA\u1800-\u180A\u1944\u1945\u1A1E\u1A1F\u1AA0-\u1AA6\u1AA8-\u1AAD\u1B5A-\u1B60\u1BFC-\u1BFF\u1C3B-\u1C3F\u1C7E\u1C7F\u1CC0-\u1CC7\u1CD3\u2010-\u2027\u2030-\u2043\u2045-\u2051\u2053-\u205E\u207D\u207E\u208D\u208E\u2329\u232A\u2768-\u2775\u27C5\u27C6\u27E6-\u27EF\u2983-\u2998\u29D8-\u29DB\u29FC\u29FD\u2CF9-\u2CFC\u2CFE\u2CFF\u2D70\u2E00-\u2E2E\u2E30-\u2E3B\u3001-\u3003\u3008-\u3011\u3014-\u301F\u3030\u303D\u30A0\u30FB\uA4FE\uA4FF\uA60D-\uA60F\uA673\uA67E\uA6F2-\uA6F7\uA874-\uA877\uA8CE\uA8CF\uA8F8-\uA8FA\uA92E\uA92F\uA95F\uA9C1-\uA9CD\uA9DE\uA9DF\uAA5C-\uAA5F\uAADE\uAADF\uAAF0\uAAF1\uABEB\uFD3E\uFD3F\uFE10-\uFE19\uFE30-\uFE52\uFE54-\uFE61\uFE63\uFE68\uFE6A\uFE6B\uFF01-\uFF03\uFF05-\uFF0A\uFF0C-\uFF0F\uFF1A\uFF1B\uFF1F\uFF20\uFF3B-\uFF3D\uFF3F\uFF5B\uFF5D\uFF5F-\uFF65\u002D\u058A\u05BE\u1400\u1806\u2010-\u2015\u2E17\u2E1A\u2E3A\u2E3B\u301C\u3030\u30A0\uFE31\uFE32\uFE58\uFE63\uFF0D\u0028\u005B\u007B\u0F3A\u0F3C\u169B\u201A\u201E\u2045\u207D\u208D\u2329\u2768\u276A\u276C\u276E\u2770\u2772\u2774\u27C5\u27E6\u27E8\u27EA\u27EC\u27EE\u2983\u2985\u2987\u2989\u298B\u298D\u298F\u2991\u2993\u2995\u2997\u29D8\u29DA\u29FC\u2E22\u2E24\u2E26\u2E28\u3008\u300A\u300C\u300E\u3010\u3014\u3016\u3018\u301A\u301D\uFD3E\uFE17\uFE35\uFE37\uFE39\uFE3B\uFE3D\uFE3F\uFE41\uFE43\uFE47\uFE59\uFE5B\uFE5D\uFF08\uFF3B\uFF5B\uFF5F\uFF62\u0029\u005D\u007D\u0F3B\u0F3D\u169C\u2046\u207E\u208E\u232A\u2769\u276B\u276D\u276F\u2771\u2773\u2775\u27C6\u27E7\u27E9\u27EB\u27ED\u27EF\u2984\u2986\u2988\u298A\u298C\u298E\u2990\u2992\u2994\u2996\u2998\u29D9\u29DB\u29FD\u2E23\u2E25\u2E27\u2E29\u3009\u300B\u300D\u300F\u3011\u3015\u3017\u3019\u301B\u301E\u301F\uFD3F\uFE18\uFE36\uFE38\uFE3A\uFE3C\uFE3E\uFE40\uFE42\uFE44\uFE48\uFE5A\uFE5C\uFE5E\uFF09\uFF3D\uFF5D\uFF60\uFF63\u00AB\u2018\u201B\u201C\u201F\u2039\u2E02\u2E04\u2E09\u2E0C\u2E1C\u2E20\u00BB\u2019\u201D\u203A\u2E03\u2E05\u2E0A\u2E0D\u2E1D\u2E21\u005F\u203F\u2040\u2054\uFE33\uFE34\uFE4D-\uFE4F\uFF3F\u0021-\u0023\u0025-\u0027\u002A\u002C\u002E\u002F\u003A\u003B\u003F\u0040\u005C\u00A1\u00A7\u00B6\u00B7\u00BF\u037E\u0387\u055A-\u055F\u0589\u05C0\u05C3\u05C6\u05F3\u05F4\u0609\u060A\u060C\u060D\u061B\u061E\u061F\u066A-\u066D\u06D4\u0700-\u070D\u07F7-\u07F9\u0830-\u083E\u085E\u0964\u0965\u0970\u0AF0\u0DF4\u0E4F\u0E5A\u0E5B\u0F04-\u0F12\u0F14\u0F85\u0FD0-\u0FD4\u0FD9\u0FDA\u104A-\u104F\u10FB\u1360-\u1368\u166D\u166E\u16EB-\u16ED\u1735\u1736\u17D4-\u17D6\u17D8-\u17DA\u1800-\u1805\u1807-\u180A\u1944\u1945\u1A1E\u1A1F\u1AA0-\u1AA6\u1AA8-\u1AAD\u1B5A-\u1B60\u1BFC-\u1BFF\u1C3B-\u1C3F\u1C7E\u1C7F\u1CC0-\u1CC7\u1CD3\u2016\u2017\u2020-\u2027\u2030-\u2038\u203B-\u203E\u2041-\u2043\u2047-\u2051\u2053\u2055-\u205E\u2CF9-\u2CFC\u2CFE\u2CFF\u2D70\u2E00\u2E01\u2E06-\u2E08\u2E0B\u2E0E-\u2E16\u2E18\u2E19\u2E1B\u2E1E\u2E1F\u2E2A-\u2E2E\u2E30-\u2E39\u3001-\u3003\u303D\u30FB\uA4FE\uA4FF\uA60D-\uA60F\uA673\uA67E\uA6F2-\uA6F7\uA874-\uA877\uA8CE\uA8CF\uA8F8-\uA8FA\uA92E\uA92F\uA95F\uA9C1-\uA9CD\uA9DE\uA9DF\uAA5C-\uAA5F\uAADE\uAADF\uAAF0\uAAF1\uABEB\uFE10-\uFE16\uFE19\uFE30\uFE45\uFE46\uFE49-\uFE4C\uFE50-\uFE52\uFE54-\uFE57\uFE5F-\uFE61\uFE68\uFE6A\uFE6B\uFF01-\uFF03\uFF05-\uFF07\uFF0A\uFF0C\uFF0E\uFF0F\uFF1A\uFF1B\uFF1F\uFF20\uFF3C\uFF61\uFF64\uFF65]").test(String.fromCharCode(value));
+                return new RegExp(/[\u0021-\u0023\u0025-\u002A\u002C-\u002F\u003A\u003B\u003F\u0040\u005B-\u005D\u005F\u007B\u007D\u00A1\u00A7\u00AB\u00B6\u00B7\u00BB\u00BF\u037E\u0387\u055A-\u055F\u0589\u058A\u05BE\u05C0\u05C3\u05C6\u05F3\u05F4\u0609\u060A\u060C\u060D\u061B\u061E\u061F\u066A-\u066D\u06D4\u0700-\u070D\u07F7-\u07F9\u0830-\u083E\u085E\u0964\u0965\u0970\u0AF0\u0DF4\u0E4F\u0E5A\u0E5B\u0F04-\u0F12\u0F14\u0F3A-\u0F3D\u0F85\u0FD0-\u0FD4\u0FD9\u0FDA\u104A-\u104F\u10FB\u1360-\u1368\u1400\u166D\u166E\u169B\u169C\u16EB-\u16ED\u1735\u1736\u17D4-\u17D6\u17D8-\u17DA\u1800-\u180A\u1944\u1945\u1A1E\u1A1F\u1AA0-\u1AA6\u1AA8-\u1AAD\u1B5A-\u1B60\u1BFC-\u1BFF\u1C3B-\u1C3F\u1C7E\u1C7F\u1CC0-\u1CC7\u1CD3\u2010-\u2027\u2030-\u2043\u2045-\u2051\u2053-\u205E\u207D\u207E\u208D\u208E\u2329\u232A\u2768-\u2775\u27C5\u27C6\u27E6-\u27EF\u2983-\u2998\u29D8-\u29DB\u29FC\u29FD\u2CF9-\u2CFC\u2CFE\u2CFF\u2D70\u2E00-\u2E2E\u2E30-\u2E3B\u3001-\u3003\u3008-\u3011\u3014-\u301F\u3030\u303D\u30A0\u30FB\uA4FE\uA4FF\uA60D-\uA60F\uA673\uA67E\uA6F2-\uA6F7\uA874-\uA877\uA8CE\uA8CF\uA8F8-\uA8FA\uA92E\uA92F\uA95F\uA9C1-\uA9CD\uA9DE\uA9DF\uAA5C-\uAA5F\uAADE\uAADF\uAAF0\uAAF1\uABEB\uFD3E\uFD3F\uFE10-\uFE19\uFE30-\uFE52\uFE54-\uFE61\uFE63\uFE68\uFE6A\uFE6B\uFF01-\uFF03\uFF05-\uFF0A\uFF0C-\uFF0F\uFF1A\uFF1B\uFF1F\uFF20\uFF3B-\uFF3D\uFF3F\uFF5B\uFF5D\uFF5F-\uFF65\u002D\u058A\u05BE\u1400\u1806\u2010-\u2015\u2E17\u2E1A\u2E3A\u2E3B\u301C\u3030\u30A0\uFE31\uFE32\uFE58\uFE63\uFF0D\u0028\u005B\u007B\u0F3A\u0F3C\u169B\u201A\u201E\u2045\u207D\u208D\u2329\u2768\u276A\u276C\u276E\u2770\u2772\u2774\u27C5\u27E6\u27E8\u27EA\u27EC\u27EE\u2983\u2985\u2987\u2989\u298B\u298D\u298F\u2991\u2993\u2995\u2997\u29D8\u29DA\u29FC\u2E22\u2E24\u2E26\u2E28\u3008\u300A\u300C\u300E\u3010\u3014\u3016\u3018\u301A\u301D\uFD3E\uFE17\uFE35\uFE37\uFE39\uFE3B\uFE3D\uFE3F\uFE41\uFE43\uFE47\uFE59\uFE5B\uFE5D\uFF08\uFF3B\uFF5B\uFF5F\uFF62\u0029\u005D\u007D\u0F3B\u0F3D\u169C\u2046\u207E\u208E\u232A\u2769\u276B\u276D\u276F\u2771\u2773\u2775\u27C6\u27E7\u27E9\u27EB\u27ED\u27EF\u2984\u2986\u2988\u298A\u298C\u298E\u2990\u2992\u2994\u2996\u2998\u29D9\u29DB\u29FD\u2E23\u2E25\u2E27\u2E29\u3009\u300B\u300D\u300F\u3011\u3015\u3017\u3019\u301B\u301E\u301F\uFD3F\uFE18\uFE36\uFE38\uFE3A\uFE3C\uFE3E\uFE40\uFE42\uFE44\uFE48\uFE5A\uFE5C\uFE5E\uFF09\uFF3D\uFF5D\uFF60\uFF63\u00AB\u2018\u201B\u201C\u201F\u2039\u2E02\u2E04\u2E09\u2E0C\u2E1C\u2E20\u00BB\u2019\u201D\u203A\u2E03\u2E05\u2E0A\u2E0D\u2E1D\u2E21\u005F\u203F\u2040\u2054\uFE33\uFE34\uFE4D-\uFE4F\uFF3F\u0021-\u0023\u0025-\u0027\u002A\u002C\u002E\u002F\u003A\u003B\u003F\u0040\u005C\u00A1\u00A7\u00B6\u00B7\u00BF\u037E\u0387\u055A-\u055F\u0589\u05C0\u05C3\u05C6\u05F3\u05F4\u0609\u060A\u060C\u060D\u061B\u061E\u061F\u066A-\u066D\u06D4\u0700-\u070D\u07F7-\u07F9\u0830-\u083E\u085E\u0964\u0965\u0970\u0AF0\u0DF4\u0E4F\u0E5A\u0E5B\u0F04-\u0F12\u0F14\u0F85\u0FD0-\u0FD4\u0FD9\u0FDA\u104A-\u104F\u10FB\u1360-\u1368\u166D\u166E\u16EB-\u16ED\u1735\u1736\u17D4-\u17D6\u17D8-\u17DA\u1800-\u1805\u1807-\u180A\u1944\u1945\u1A1E\u1A1F\u1AA0-\u1AA6\u1AA8-\u1AAD\u1B5A-\u1B60\u1BFC-\u1BFF\u1C3B-\u1C3F\u1C7E\u1C7F\u1CC0-\u1CC7\u1CD3\u2016\u2017\u2020-\u2027\u2030-\u2038\u203B-\u203E\u2041-\u2043\u2047-\u2051\u2053\u2055-\u205E\u2CF9-\u2CFC\u2CFE\u2CFF\u2D70\u2E00\u2E01\u2E06-\u2E08\u2E0B\u2E0E-\u2E16\u2E18\u2E19\u2E1B\u2E1E\u2E1F\u2E2A-\u2E2E\u2E30-\u2E39\u3001-\u3003\u303D\u30FB\uA4FE\uA4FF\uA60D-\uA60F\uA673\uA67E\uA6F2-\uA6F7\uA874-\uA877\uA8CE\uA8CF\uA8F8-\uA8FA\uA92E\uA92F\uA95F\uA9C1-\uA9CD\uA9DE\uA9DF\uAA5C-\uAA5F\uAADE\uAADF\uAAF0\uAAF1\uABEB\uFE10-\uFE16\uFE19\uFE30\uFE45\uFE46\uFE49-\uFE4C\uFE50-\uFE52\uFE54-\uFE57\uFE5F-\uFE61\uFE68\uFE6A\uFE6B\uFF01-\uFF03\uFF05-\uFF07\uFF0A\uFF0C\uFF0E\uFF0F\uFF1A\uFF1B\uFF1F\uFF20\uFF3C\uFF61\uFF64\uFF65]/).test(String.fromCharCode(value));
             },
 
             isNumber: function (value) {
@@ -4667,7 +5017,7 @@
                     return ([48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 178, 179, 185, 188, 189, 190].indexOf(value) != -1);
                 }
 
-                return new RegExp("[\u0030-\u0039\u00B2\u00B3\u00B9\u00BC-\u00BE\u0660-\u0669\u06F0-\u06F9\u07C0-\u07C9\u0966-\u096F\u09E6-\u09EF\u09F4-\u09F9\u0A66-\u0A6F\u0AE6-\u0AEF\u0B66-\u0B6F\u0B72-\u0B77\u0BE6-\u0BF2\u0C66-\u0C6F\u0C78-\u0C7E\u0CE6-\u0CEF\u0D66-\u0D75\u0E50-\u0E59\u0ED0-\u0ED9\u0F20-\u0F33\u1040-\u1049\u1090-\u1099\u1369-\u137C\u16EE-\u16F0\u17E0-\u17E9\u17F0-\u17F9\u1810-\u1819\u1946-\u194F\u19D0-\u19DA\u1A80-\u1A89\u1A90-\u1A99\u1B50-\u1B59\u1BB0-\u1BB9\u1C40-\u1C49\u1C50-\u1C59\u2070\u2074-\u2079\u2080-\u2089\u2150-\u2182\u2185-\u2189\u2460-\u249B\u24EA-\u24FF\u2776-\u2793\u2CFD\u3007\u3021-\u3029\u3038-\u303A\u3192-\u3195\u3220-\u3229\u3248-\u324F\u3251-\u325F\u3280-\u3289\u32B1-\u32BF\uA620-\uA629\uA6E6-\uA6EF\uA830-\uA835\uA8D0-\uA8D9\uA900-\uA909\uA9D0-\uA9D9\uAA50-\uAA59\uABF0-\uABF9\uFF10-\uFF19\u0030-\u0039\u0660-\u0669\u06F0-\u06F9\u07C0-\u07C9\u0966-\u096F\u09E6-\u09EF\u0A66-\u0A6F\u0AE6-\u0AEF\u0B66-\u0B6F\u0BE6-\u0BEF\u0C66-\u0C6F\u0CE6-\u0CEF\u0D66-\u0D6F\u0E50-\u0E59\u0ED0-\u0ED9\u0F20-\u0F29\u1040-\u1049\u1090-\u1099\u17E0-\u17E9\u1810-\u1819\u1946-\u194F\u19D0-\u19D9\u1A80-\u1A89\u1A90-\u1A99\u1B50-\u1B59\u1BB0-\u1BB9\u1C40-\u1C49\u1C50-\u1C59\uA620-\uA629\uA8D0-\uA8D9\uA900-\uA909\uA9D0-\uA9D9\uAA50-\uAA59\uABF0-\uABF9\uFF10-\uFF19\u16EE-\u16F0\u2160-\u2182\u2185-\u2188\u3007\u3021-\u3029\u3038-\u303A\uA6E6-\uA6EF\u00B2\u00B3\u00B9\u00BC-\u00BE\u09F4-\u09F9\u0B72-\u0B77\u0BF0-\u0BF2\u0C78-\u0C7E\u0D70-\u0D75\u0F2A-\u0F33\u1369-\u137C\u17F0-\u17F9\u19DA\u2070\u2074-\u2079\u2080-\u2089\u2150-\u215F\u2189\u2460-\u249B\u24EA-\u24FF\u2776-\u2793\u2CFD\u3192-\u3195\u3220-\u3229\u3248-\u324F\u3251-\u325F\u3280-\u3289\u32B1-\u32BF\uA830-\uA835]").test(String.fromCharCode(value));
+                return new RegExp(/[\u0030-\u0039\u00B2\u00B3\u00B9\u00BC-\u00BE\u0660-\u0669\u06F0-\u06F9\u07C0-\u07C9\u0966-\u096F\u09E6-\u09EF\u09F4-\u09F9\u0A66-\u0A6F\u0AE6-\u0AEF\u0B66-\u0B6F\u0B72-\u0B77\u0BE6-\u0BF2\u0C66-\u0C6F\u0C78-\u0C7E\u0CE6-\u0CEF\u0D66-\u0D75\u0E50-\u0E59\u0ED0-\u0ED9\u0F20-\u0F33\u1040-\u1049\u1090-\u1099\u1369-\u137C\u16EE-\u16F0\u17E0-\u17E9\u17F0-\u17F9\u1810-\u1819\u1946-\u194F\u19D0-\u19DA\u1A80-\u1A89\u1A90-\u1A99\u1B50-\u1B59\u1BB0-\u1BB9\u1C40-\u1C49\u1C50-\u1C59\u2070\u2074-\u2079\u2080-\u2089\u2150-\u2182\u2185-\u2189\u2460-\u249B\u24EA-\u24FF\u2776-\u2793\u2CFD\u3007\u3021-\u3029\u3038-\u303A\u3192-\u3195\u3220-\u3229\u3248-\u324F\u3251-\u325F\u3280-\u3289\u32B1-\u32BF\uA620-\uA629\uA6E6-\uA6EF\uA830-\uA835\uA8D0-\uA8D9\uA900-\uA909\uA9D0-\uA9D9\uAA50-\uAA59\uABF0-\uABF9\uFF10-\uFF19\u0030-\u0039\u0660-\u0669\u06F0-\u06F9\u07C0-\u07C9\u0966-\u096F\u09E6-\u09EF\u0A66-\u0A6F\u0AE6-\u0AEF\u0B66-\u0B6F\u0BE6-\u0BEF\u0C66-\u0C6F\u0CE6-\u0CEF\u0D66-\u0D6F\u0E50-\u0E59\u0ED0-\u0ED9\u0F20-\u0F29\u1040-\u1049\u1090-\u1099\u17E0-\u17E9\u1810-\u1819\u1946-\u194F\u19D0-\u19D9\u1A80-\u1A89\u1A90-\u1A99\u1B50-\u1B59\u1BB0-\u1BB9\u1C40-\u1C49\u1C50-\u1C59\uA620-\uA629\uA8D0-\uA8D9\uA900-\uA909\uA9D0-\uA9D9\uAA50-\uAA59\uABF0-\uABF9\uFF10-\uFF19\u16EE-\u16F0\u2160-\u2182\u2185-\u2188\u3007\u3021-\u3029\u3038-\u303A\uA6E6-\uA6EF\u00B2\u00B3\u00B9\u00BC-\u00BE\u09F4-\u09F9\u0B72-\u0B77\u0BF0-\u0BF2\u0C78-\u0C7E\u0D70-\u0D75\u0F2A-\u0F33\u1369-\u137C\u17F0-\u17F9\u19DA\u2070\u2074-\u2079\u2080-\u2089\u2150-\u215F\u2189\u2460-\u249B\u24EA-\u24FF\u2776-\u2793\u2CFD\u3192-\u3195\u3220-\u3229\u3248-\u324F\u3251-\u325F\u3280-\u3289\u32B1-\u32BF\uA830-\uA835]/).test(String.fromCharCode(value));
             },
 
             isControl: function (value) {
@@ -4675,7 +5025,7 @@
                     return (value >= 0 && value <= 31) || (value >= 127 && value <= 159);
                 }
 
-                return new RegExp("[\u0000-\u001F\u007F\u0080-\u009F]").test(String.fromCharCode(value));
+                return new RegExp(/[\u0000-\u001F\u007F\u0080-\u009F]/).test(String.fromCharCode(value));
             },
 
             isLatin1: function (ch) {
@@ -4845,13 +5195,13 @@ Bridge.define("System.Exception", {
         getBaseException: function() {
             var inner = this.innerException;
             var back = this;
-            
+
             while (inner != null) {
                 back = inner;
                 inner = inner.innerException;
             }
-            
-            return back;  
+
+            return back;
         },
 
         toString: function () {
@@ -4862,11 +5212,11 @@ Bridge.define("System.Exception", {
             } else {
                 builder += "\n";
             }
-                
+
             if (this.StackTrace != null) {
                 builder += this.StackTrace + "\n";
             }
-                
+
             return builder;
         },
 
@@ -5016,7 +5366,7 @@ Bridge.define("System.Exception", {
                         return this.paramName;
                     }
                 }
-            }  
+            }
         },
 
         ctor: function (message, paramName, innerException) {
@@ -5253,7 +5603,7 @@ Bridge.define("System.Exception", {
         ctor: function (message, innerExceptions) {
             this.$initialize();
             this.innerExceptions = new(System.Collections.ObjectModel.ReadOnlyCollection$1(System.Exception))(Bridge.hasValue(innerExceptions) ? Bridge.toArray(innerExceptions) : []);
-            System.Exception.ctor.call(this, message || 'One or more errors occurred.', this.innerExceptions.items.length ? this.innerExceptions.items[0] : null);
+            System.Exception.ctor.call(this, message || 'One or more errors occurred.', this.innerExceptions.Count > 0 ? this.innerExceptions.getItem(0) : null);
         },
 
         handle: function (predicate) {
@@ -5261,12 +5611,12 @@ Bridge.define("System.Exception", {
                 throw new System.ArgumentNullException("predicate");
             }
 
-            var count = this.innerExceptions.getCount(),
+            var count = this.innerExceptions.Count,
                 unhandledExceptions = [];
 
             for (var i = 0; i < count; i++) {
                 if (!predicate(this.innerExceptions.get(i))) {
-                    unhandledExceptions.push(this.innerExceptions.get(i));
+                    unhandledExceptions.push(this.innerExceptions.getItem(i));
                 }
             }
 
@@ -5278,12 +5628,12 @@ Bridge.define("System.Exception", {
         getBaseException: function() {
             var back = this;
             var backAsAggregate = this;
-            while (backAsAggregate != null && backAsAggregate.innerExceptions.getCount() === 1)
+            while (backAsAggregate != null && backAsAggregate.innerExceptions.Count === 1)
             {
                 back = back.InnerException;
                 backAsAggregate = Bridge.as(back, System.AggregateException);
             }
-            return back;  
+            return back;
         },
 
         flatten: function () {
@@ -5296,12 +5646,13 @@ Bridge.define("System.Exception", {
             var nDequeueIndex = 0;
 
             // Continue removing and recursively flattening exceptions, until there are no more.
-            while (exceptionsToFlatten.getCount() > nDequeueIndex) {
+            while (exceptionsToFlatten.Count > nDequeueIndex) {
                 // dequeue one from exceptionsToFlatten
-                var currentInnerExceptions = exceptionsToFlatten.getItem(nDequeueIndex++).innerExceptions;
+                var currentInnerExceptions = exceptionsToFlatten.getItem(nDequeueIndex++).innerExceptions,
+                    count = currentInnerExceptions.Count;
 
-                for (var i = 0; i < currentInnerExceptions.getCount(); i++) {
-                    var currentInnerException = currentInnerExceptions.get(i);
+                for (var i = 0; i < count; i++) {
+                    var currentInnerException = currentInnerExceptions.getItem(i);
 
                     if (!Bridge.hasValue(currentInnerException)) {
                         continue;
@@ -5329,6 +5680,46 @@ Bridge.define("System.Exception", {
         ctor: function (message, innerException) {
             this.$initialize();
             System.Exception.ctor.call(this, message || "Ambiguous match.", innerException);
+        }
+    });
+
+    // @source textInfo.js
+
+    Bridge.define("System.Globalization.TextInfo", {
+        inherits: [System.ICloneable,System.Object],
+        fields: {
+            listSeparator: null
+        },
+        props: {
+            ANSICodePage: 0,
+            CultureName: null,
+            EBCDICCodePage: 0,
+            IsReadOnly: false,
+            IsRightToLeft: false,
+            LCID: 0,
+            ListSeparator: {
+                get: function () {
+                    return this.listSeparator;
+                },
+                set: function (value) {
+                    this.verifyWritable();
+
+                    this.listSeparator = value;
+                }
+            },
+            MacCodePage: 0,
+            OEMCodePage: 0
+        },
+        alias: ["clone", "System$ICloneable$clone"],
+        methods: {
+            clone: function () {
+                return Bridge.copy(new System.Globalization.TextInfo(), this, System.Array.init(["ANSICodePage", "CultureName", "EBCDICCodePage", "IsRightToLeft", "LCID", "listSeparator", "MacCodePage", "OEMCodePage", "IsReadOnly"], System.String));
+            },
+            verifyWritable: function () {
+                if (this.IsReadOnly) {
+                    throw new System.InvalidOperationException("Instance is read-only.");
+                }
+            }
         }
     });
 
@@ -5619,7 +6010,18 @@ Bridge.define("System.Exception", {
                     englishName: "Invariant Language (Invariant Country)",
                     nativeName: "Invariant Language (Invariant Country)",
                     numberFormat: System.Globalization.NumberFormatInfo.invariantInfo,
-                    dateTimeFormat: System.Globalization.DateTimeFormatInfo.invariantInfo
+                    dateTimeFormat: System.Globalization.DateTimeFormatInfo.invariantInfo,
+                    TextInfo: Bridge.merge(new System.Globalization.TextInfo(), {
+                        ANSICodePage: 1252,
+                        CultureName: "",
+                        EBCDICCodePage: 37,
+                        listSeparator: ",",
+                        IsRightToLeft: false,
+                        LCID: 127,
+                        MacCodePage: 10000,
+                        OEMCodePage: 437,
+                        IsReadOnly: true
+                    })
                 });
 
                 this.setCurrentCulture(System.Globalization.CultureInfo.invariantCulture);
@@ -5637,11 +6039,19 @@ Bridge.define("System.Exception", {
             },
 
             getCultureInfo: function (name) {
-                if (!name) {
+                if (name == null) {
                     throw new System.ArgumentNullException("name");
+                } else if (name === "") {
+                    return System.Globalization.CultureInfo.invariantCulture;
                 }
 
-                return this.cultures[name];
+                var c = this.cultures[name];
+
+                if (c == null) {
+                    throw new System.Globalization.CultureNotFoundException("name", name);
+                }
+
+                return c;
             },
 
             getCultures: function () {
@@ -5665,19 +6075,34 @@ Bridge.define("System.Exception", {
                 System.Globalization.CultureInfo.cultures = {};
             }
 
-            if (System.Globalization.CultureInfo.cultures[name]) {
-                Bridge.copy(this, System.Globalization.CultureInfo.cultures[name], [
-                    "englishName",
-                    "nativeName",
-                    "numberFormat",
-                    "dateTimeFormat"
-                ]);
+            if (name == null) {
+                throw new System.ArgumentNullException("name");
+            }
+
+            var c;
+
+            if (name === "") {
+                c =  System.Globalization.CultureInfo.invariantCulture;
             } else {
+                c = System.Globalization.CultureInfo.cultures[name];
+            }
+
+            if (c == null) {
                 if (!create) {
                     throw new System.Globalization.CultureNotFoundException("name", name);
                 }
 
                 System.Globalization.CultureInfo.cultures[name] = this;
+            } else {
+                Bridge.copy(this, c, [
+                            "englishName",
+                            "nativeName",
+                            "numberFormat",
+                            "dateTimeFormat",
+                            "TextInfo"
+                ]);
+
+                this.TextInfo.IsReadOnly = false;
             }
         },
 
@@ -5941,6 +6366,9 @@ Bridge.Class.addExtend(System.Boolean, [System.IComparable$1(System.Boolean), Sy
         inherits: [System.IComparable, System.IFormattable],
         statics: {
             $number: true,
+
+            MAX_SAFE_INTEGER: Number.MAX_SAFE_INTEGER || Math.pow(2, 53) - 1,
+            MIN_SAFE_INTEGER: Number.MIN_SAFE_INTEGER || -(Math.pow(2, 53) - 1),
 
             $is: function (instance) {
                 return typeof (instance) === "number" && isFinite(instance) && Math.floor(instance, 0) === instance;
@@ -6601,6 +7029,7 @@ Bridge.Class.addExtend(System.Boolean, [System.IComparable$1(System.Boolean), Sy
                 result.v = parseInt(str, radix);
 
                 if (result.v < min || result.v > max) {
+                    result.v = 0;
                     return false;
                 }
 
@@ -6726,17 +7155,25 @@ Bridge.Class.addExtend(System.Boolean, [System.IComparable$1(System.Boolean), Sy
                 return ((al * bl) + (((ah * bl + al * bh) << 16) >>> 0) | 0);
             },
 
-            mul: function (a, b) {
+            mul: function (a, b, overflow) {
                 if (a == null || b == null) {
                     return null;
+                }
+
+                if (overflow) {
+                    Bridge.Int.check(a * b, System.Int32)
                 }
 
                 return Bridge.Int.$mul(a, b);
             },
 
-            umul: function (a, b) {
+            umul: function (a, b, overflow) {
                 if (a == null || b == null) {
                     return null;
+                }
+
+                if (overflow) {
+                    Bridge.Int.check(a * b, System.UInt32)
                 }
 
                 return Bridge.Int.$mul(a, b) >>> 0;
@@ -7023,7 +7460,7 @@ Bridge.Class.addExtend(System.Boolean, [System.IComparable$1(System.Boolean), Sy
     };
 
     System.Int64.prototype.toJSON = function () {
-        return this.toNumber();
+        return this.gt(Bridge.Int.MAX_SAFE_INTEGER) || this.lt(Bridge.Int.MIN_SAFE_INTEGER) ? this.toString() : this.toNumber();
     };
 
     System.Int64.prototype.toString = function (format, provider) {
@@ -7254,7 +7691,7 @@ Bridge.Class.addExtend(System.Boolean, [System.IComparable$1(System.Boolean), Sy
 
         var result = new System.Int64(str);
 
-        if (str !== result.toString()) {
+        if (System.String.trimStartZeros(str) !== result.toString()) {
             throw new System.OverflowException();
         }
 
@@ -7270,7 +7707,7 @@ Bridge.Class.addExtend(System.Boolean, [System.IComparable$1(System.Boolean), Sy
 
             v.v = new System.Int64(str);
 
-            if (str !== v.v.toString()) {
+            if (System.String.trimStartZeros(str) !== v.v.toString()) {
                 v.v = System.Int64(Bridge.$Long.ZERO);
                 return false;
             }
@@ -7533,7 +7970,6 @@ Bridge.Class.addExtend(System.Boolean, [System.IComparable$1(System.Boolean), Sy
         return System.UInt64.create(l);
     };
 
-    System.UInt64.prototype.toJSON = System.Int64.prototype.toJSON;
     System.UInt64.prototype.toString = System.Int64.prototype.toString;
     System.UInt64.prototype.format = System.Int64.prototype.format;
     System.UInt64.prototype.isNegative = System.Int64.prototype.isNegative;
@@ -7578,7 +8014,7 @@ Bridge.Class.addExtend(System.Boolean, [System.IComparable$1(System.Boolean), Sy
             throw new System.OverflowException();
         }
 
-        if (str !== result.toString()) {
+        if (System.String.trimStartZeros(str) !== result.toString()) {
             throw new System.OverflowException();
         }
 
@@ -7599,7 +8035,7 @@ Bridge.Class.addExtend(System.Boolean, [System.IComparable$1(System.Boolean), Sy
                 return false;
             }
 
-            if (str !== v.v.toString()) {
+            if (System.String.trimStartZeros(str) !== v.v.toString()) {
                 v.v = System.UInt64(Bridge.$Long.UZERO);
                 return false;
             }
@@ -7655,6 +8091,10 @@ Bridge.Class.addExtend(System.Boolean, [System.IComparable$1(System.Boolean), Sy
         var remainder = a.mod(b);
         result.v = remainder;
         return a.sub(remainder).div(b);
+    };
+
+    System.UInt64.prototype.toJSON = function () {
+        return this.gt(Bridge.Int.MAX_SAFE_INTEGER) ? this.toString() : this.toNumber();
     };
 
     System.UInt64.prototype.and = System.Int64.prototype.and;
@@ -7894,7 +8334,7 @@ Bridge.Class.addExtend(System.Boolean, [System.IComparable$1(System.Boolean), Sy
     };
 
     System.Decimal.prototype.equals = function (v) {
-        if (v instanceof System.Decimal) {
+        if (v instanceof System.Decimal || typeof v === "number") {
             return !this.compareTo(v);
         }
 
@@ -8187,6 +8627,54 @@ Bridge.Class.addExtend(System.Boolean, [System.IComparable$1(System.Boolean), Sy
         return d;
     };
 
+    System.Decimal.prototype.getBytes = function () {
+        var s = this.value.s,
+            e = this.value.e,
+            d = this.value.d,
+            bytes = System.Array.init(23, 0, System.Byte);
+
+        bytes[0] = s & 255;
+        bytes[1] = e;
+
+        if (d && d.length > 0) {
+            bytes[2] = d.length * 4;
+
+            for (var i = 0; i < d.length; i++) {
+                bytes[i*4 + 3] = d[i] & 255;
+                bytes[i*4 + 4] = (d[i] >> 8) & 255;
+                bytes[i*4 + 5] = (d[i] >> 16) & 255;
+                bytes[i*4 + 6] = (d[i] >> 24) & 255;
+            }
+        }
+        else {
+            bytes[2] = 0;
+        }
+
+        return bytes;
+    };
+
+    System.Decimal.fromBytes = function (bytes) {
+        var value = new System.Decimal(0),
+            s = Bridge.Int.sxb(bytes[0] & 255),
+            e = bytes[1],
+            ln = bytes[2],
+            d = [];
+
+        value.value.s = s;
+        value.value.e = e;
+
+        if (ln > 0) {
+            for (var i = 3; i < (ln + 3);) {
+                d.push(bytes[i] | bytes[i + 1] << 8 | bytes[i + 2] << 16 | bytes[i + 3] << 24);
+                i = i + 4;
+            }
+        }
+
+        value.value.d = d;
+
+        return value;
+    };
+
     Bridge.$Decimal.config({ precision: 29 });
 
     System.Decimal.Zero = System.Decimal(0);
@@ -8262,17 +8750,21 @@ Bridge.Class.addExtend(System.Boolean, [System.IComparable$1(System.Boolean), Sy
             // Get the number of ticks since 0001-01-01T00:00:00.0000000 UTC
             getTicks: function (d) {
                 d.kind = (d.kind !== undefined) ? d.kind : 0
-                d.ticks = (d.ticks !== undefined) ? d.ticks : System.Int64(d.getTime() - d.getTimezoneOffset() * 60 * 1000).mul(10000).add(System.DateTime.minOffset);
+
+                if (d.ticks === undefined) {
+                    if (d.kind === 1) {
+                        d.ticks = System.Int64(d.getTime()).mul(10000).add(System.DateTime.minOffset);
+                    } else {
+                        d.ticks = System.Int64(d.getTime() - d.getTimezoneOffset() * 60 * 1000).mul(10000).add(System.DateTime.minOffset);
+                    }
+                }
 
                 return d.ticks;
             },
 
             toLocalTime: function (d) {
-                d.kind = (d.kind !== undefined) ? d.kind : 0
-                d.ticks = (d.ticks !== undefined) ? d.ticks : System.Int64(d.getTime()).mul(10000);
-
                 var d1,
-                    ticks = d.ticks;
+                    ticks = System.DateTime.getTicks(d);
 
                 if (d.kind !== 2) {
                     ticks = d.ticks.sub(System.Int64(d.getTimezoneOffset() * 60 * 1000).mul(10000));
@@ -8713,6 +9205,12 @@ Bridge.Class.addExtend(System.Boolean, [System.IComparable$1(System.Boolean), Sy
                     }
 
                     throw new System.FormatException("String does not contain a valid string representation of a date and time.");
+                } else {
+                    // TODO: The code below assumes that there are no quotation marks around the UTC/Z format token (the format patterns
+                    // used by Bridge appear to use quotation marks throughout (see universalSortableDateTimePattern), including
+                    // in the recent Newtonsoft.Json.JsonConvert release).
+                    // Until the above is sorted out, manually remove quotation marks to get UTC times parsed correctly.
+                    format = format.replace("'Z'", "Z");
                 }
 
                 var now = new Date(),
@@ -8998,6 +9496,18 @@ Bridge.Class.addExtend(System.Boolean, [System.IComparable$1(System.Boolean), Sy
                             if (neg) {
                                 offset = -offset;
                             }
+                        } else if (token === "Z") {
+                            var ch = str.substring(idx, idx + 1);
+                            if (ch === "Z" || ch === "z") {
+                                kind = 1;
+                                idx += 1;
+                            }
+                            else {
+                                invalid = true;
+                            }
+
+                            break;
+
                         } else if (token === "zzz" || token === "K") {
                             if (str.substring(idx, idx + 1) === "Z") {
                                 kind = 2;
@@ -9287,6 +9797,7 @@ Bridge.Class.addExtend(System.Boolean, [System.IComparable$1(System.Boolean), Sy
                 var d1 = new Date(d.getTime() + Math.round(v));
 
                 d1.kind = d.kind;
+                d1.ticks = System.DateTime.getTicks(d1);
 
                 return d1;
             },
@@ -9301,6 +9812,7 @@ Bridge.Class.addExtend(System.Boolean, [System.IComparable$1(System.Boolean), Sy
                 var d1 = new Date(d.getTime() + value.ticks.div(10000).toNumber());
 
                 d1.kind = d.kind;
+                d1.ticks = System.DateTime.getTicks(d1);
 
                 return d1;
             },
@@ -9311,6 +9823,7 @@ Bridge.Class.addExtend(System.Boolean, [System.IComparable$1(System.Boolean), Sy
                 var d1 = new Date(d.getTime() - value.ticks.div(10000).toNumber());
 
                 d1.kind = d.kind;
+                d1.ticks = System.DateTime.getTicks(d1);
 
                 return d1;
             },
@@ -9326,11 +9839,19 @@ Bridge.Class.addExtend(System.Boolean, [System.IComparable$1(System.Boolean), Sy
             getDayOfYear: function (d) {
                 var ny = new Date(d.getTime());
 
-                ny.setMonth(0);
-                ny.setDate(1);
-                ny.setHours(0);
-                ny.setMinutes(0);
-                ny.setMilliseconds(0);
+                if (d.kind !== 1) {
+                    ny.setMonth(0);
+                    ny.setDate(1);
+                    ny.setHours(0);
+                    ny.setMinutes(0);
+                    ny.setMilliseconds(0);
+                } else {
+                    ny.setUTCMonth(0);
+                    ny.setUTCDate(1);
+                    ny.setUTCHours(0);
+                    ny.setUTCMinutes(0);
+                    ny.setUTCMilliseconds(0);
+                }
 
                 return Math.ceil((d - ny) / 864e5);
             },
@@ -9339,11 +9860,21 @@ Bridge.Class.addExtend(System.Boolean, [System.IComparable$1(System.Boolean), Sy
                 d.kind = (d.kind !== undefined) ? d.kind : 0
 
                 var d1 = new Date(d.getTime());
-                d1.setHours(0);
-                d1.setMinutes(0);
-                d1.setSeconds(0);
-                d1.setMilliseconds(0);
+
+                if (d.kind !== 1) {
+                    d1.setHours(0);
+                    d1.setMinutes(0);
+                    d1.setSeconds(0);
+                    d1.setMilliseconds(0);
+                } else {
+                    d1.setUTCHours(0);
+                    d1.setUTCMinutes(0);
+                    d1.setUTCSeconds(0);
+                    d1.setUTCMilliseconds(0);
+                }
+
                 d1.kind = d.kind;
+                d1.ticks = System.DateTime.getTicks(d1);
 
                 return d1;
             },
@@ -9381,22 +9912,23 @@ Bridge.Class.addExtend(System.Boolean, [System.IComparable$1(System.Boolean), Sy
             },
 
             gt: function (a, b) {
-                return Bridge.hasValue$1(a, b) ? (a > b) : false;
+                return (a != null && b != null) ? (System.DateTime.getTicks(a).gt(System.DateTime.getTicks(b))) : false;
             },
 
             gte: function (a, b) {
-                return Bridge.hasValue$1(a, b) ? (a >= b) : false;
+                return (a != null && b != null) ? (System.DateTime.getTicks(a).gte(System.DateTime.getTicks(b))) : false;
             },
 
             lt: function (a, b) {
-                return Bridge.hasValue$1(a, b) ? (a < b) : false;
+                return (a != null && b != null) ? (System.DateTime.getTicks(a).lt(System.DateTime.getTicks(b))) : false;
             },
 
             lte: function (a, b) {
-                return Bridge.hasValue$1(a, b) ? (a <= b) : false;
+                return (a != null && b != null) ? (System.DateTime.getTicks(a).lte(System.DateTime.getTicks(b))) : false;
             }
         }
     });
+
     // @source TimeSpan.js
 
     Bridge.define("System.TimeSpan", {
@@ -9453,11 +9985,19 @@ Bridge.Class.addExtend(System.Boolean, [System.IComparable$1(System.Boolean), Sy
             },
 
             eq: function (t1, t2) {
-                return Bridge.hasValue$1(t1, t2) ? (t1.ticks.eq(t2.ticks)) : null;
+                if (t1 === null && t2 === null) {
+                    return true;
+                }
+
+                return Bridge.hasValue$1(t1, t2) ? (t1.ticks.eq(t2.ticks)) : false;
             },
 
             neq: function (t1, t2) {
-                return Bridge.hasValue$1(t1, t2) ? (t1.ticks.ne(t2.ticks)) : null;
+                if (t1 === null && t2 === null) {
+                    return false;
+                }
+
+                return Bridge.hasValue$1(t1, t2) ? (t1.ticks.ne(t2.ticks)) : true;
             },
 
             plus: function (t) {
@@ -9569,7 +10109,7 @@ Bridge.Class.addExtend(System.Boolean, [System.IComparable$1(System.Boolean), Sy
         },
 
         equals: function (other) {
-            return other.ticks.eq(this.ticks);
+            return Bridge.is(other, System.TimeSpan) ? other.ticks.eq(this.ticks) : false;
         },
 
         equalsT: function (other) {
@@ -10228,7 +10768,7 @@ Bridge.Class.addExtend(System.Boolean, [System.IComparable$1(System.Boolean), Sy
                         return this._condition;
                     }
                 }
-            }  
+            }
         },
 
         ctor: function (failureKind, failureMessage, userMessage, condition, innerException) {
@@ -10319,7 +10859,7 @@ Bridge.Class.addExtend(System.Boolean, [System.IComparable$1(System.Boolean), Sy
         },
 
         getRank: function (arr) {
-            return arr.$s ? arr.$s.length : 1;
+            return arr.$type ? arr.$type.$rank : (arr.$s ? arr.$s.length : 1);
         },
 
         getLower: function (arr, d) {
@@ -10366,9 +10906,9 @@ Bridge.Class.addExtend(System.Boolean, [System.IComparable$1(System.Boolean), Sy
             }
 
             arr.length = length;
-
+            var isFn = Bridge.isFunction(defvalue);
             for (var k = 0; k < length; k++) {
-                arr[k] = defvalue;
+                arr[k] = isFn ? defvalue() : defvalue;
             }
 
             if (initValues) {
@@ -10493,7 +11033,13 @@ Bridge.Class.addExtend(System.Boolean, [System.IComparable$1(System.Boolean), Sy
             } else {
                 newArr = arr.slice(0);
             }
+
             newArr.$type = arr.$type;
+            newArr.$v = arr.$v;
+            newArr.$s = arr.$s;
+            newArr.get = System.Array.$get;
+            newArr.set = System.Array.$set;
+
             return newArr;
         },
 
@@ -10558,12 +11104,14 @@ Bridge.Class.addExtend(System.Boolean, [System.IComparable$1(System.Boolean), Sy
             }
 
             if (T && Bridge.isFunction(obj[name = "System$Collections$Generic$ICollection$1$" + Bridge.getTypeAlias(T) + "$add"])) {
-                obj[name](item);
+                return obj[name](item);
             } else if (Bridge.isFunction(obj[name = "System$Collections$IList$add"])) {
-                obj[name](item);
+                return obj[name](item);
             } else if (Bridge.isFunction(obj.add)) {
-                obj.add(item);
+                return obj.add(item);
             }
+
+            return -1;
         },
 
         checkNewElementType: function (v, type) {
@@ -10680,7 +11228,7 @@ Bridge.Class.addExtend(System.Boolean, [System.IComparable$1(System.Boolean), Sy
                     endIndex;
 
                 startIndex = startIndex || 0;
-                count = count || arr.length;
+                count = Bridge.isNumber(count) ? count : arr.length;
                 endIndex = startIndex + count;
 
                 for (i = startIndex; i < endIndex; i++) {
@@ -10781,12 +11329,13 @@ Bridge.Class.addExtend(System.Boolean, [System.IComparable$1(System.Boolean), Sy
 
             if (Bridge.isArray(obj)) {
                 return obj.$type && Bridge.getDefaultValue(obj.$type.$elementType) != null ? Bridge.box(obj[idx], obj.$type.$elementType) : obj[idx];
+            } else if (T && Bridge.isFunction(obj[name = "System$Collections$Generic$IList$1$" + Bridge.getTypeAlias(T) + "$getItem"])) {
+                v = obj[name](idx);
+                return v;
             } else if (Bridge.isFunction(obj.get)) {
                 v = obj.get(idx);
             } else if (Bridge.isFunction(obj.getItem)) {
                 v = obj.getItem(idx);
-            } else if (T && Bridge.isFunction(obj[name = "System$Collections$Generic$IList$1$" + Bridge.getTypeAlias(T) + "$getItem"])) {
-                v = obj[name](idx);
             } else if (Bridge.isFunction(obj[name = "System$Collections$IList$$getItem"])) {
                 v = obj[name](idx);
             } else if (Bridge.isFunction(obj.get_Item)) {
@@ -10942,7 +11491,7 @@ Bridge.Class.addExtend(System.Boolean, [System.IComparable$1(System.Boolean), Sy
                 i = lo + ((hi - lo) >> 1);
 
                 try {
-                    c = comparer.compare(array[i], value);
+                    c = System.Collections.Generic.Comparer$1.get(comparer)(array[i], value);
                 } catch (e) {
                     throw new System.InvalidOperationException("Failed to compare two elements in the array.", e);
                 }
@@ -10989,11 +11538,11 @@ Bridge.Class.addExtend(System.Boolean, [System.IComparable$1(System.Boolean), Sy
             }
 
             if (index === 0 && length === array.length) {
-                array.sort(Bridge.fn.bind(comparer, comparer.compare));
+                array.sort(Bridge.fn.bind(comparer, System.Collections.Generic.Comparer$1.get(comparer)));
             } else {
                 var newarray = array.slice(index, index + length);
 
-                newarray.sort(Bridge.fn.bind(comparer, comparer.compare));
+                newarray.sort(Bridge.fn.bind(comparer, System.Collections.Generic.Comparer$1.get(comparer)));
 
                 for (var i = index; i < (index + length) ; i++) {
                     array[i] = newarray[i - index];
@@ -11359,11 +11908,55 @@ Bridge.Class.addExtend(System.Boolean, [System.IComparable$1(System.Boolean), Sy
     // @source ArraySegment.js
 
     Bridge.define('System.ArraySegment', {
+        $kind: "struct",
+
+        statics: {
+            getDefaultValue: function () {
+                return new System.ArraySegment();
+            }
+        },
+
         ctor: function (array, offset, count) {
             this.$initialize();
+
+            if (arguments.length === 0) {
+                this.array = null;
+                this.offset = 0;
+                this.count = 0;
+                return;
+            }
+
+            if (array == null) {
+                throw new System.ArgumentNullException("array");
+            }
+
             this.array = array;
-            this.offset = offset || 0;
-            this.count = count || array.length;
+
+            if (Bridge.isNumber(offset)) {
+                if (offset < 0) {
+                    throw new System.ArgumentOutOfRangeException("offset");
+                }
+
+                this.offset = offset;
+            }
+            else {
+                this.offset = 0;
+            }
+
+            if (Bridge.isNumber(count)) {
+                if (count < 0) {
+                    throw new System.ArgumentOutOfRangeException("count");
+                }
+
+                this.count = count;
+            }
+            else {
+                this.count = array.length;
+            }
+
+            if (array.length - this.offset < this.count) {
+                throw new ArgumentException();
+            }
         },
 
         getArray: function () {
@@ -11376,7 +11969,21 @@ Bridge.Class.addExtend(System.Boolean, [System.IComparable$1(System.Boolean), Sy
 
         getOffset: function () {
             return this.offset;
-        }
+        },
+
+        getHashCode: function () {
+            var h = Bridge.addHash([5322976039, this.array, this.count, this.offset]);
+            return h;
+        },
+
+        equals: function (o) {
+            if (!Bridge.is(o, System.ArraySegment)) {
+                return false;
+            }
+            return Bridge.equals(this.array, o.array) && Bridge.equals(this.count, o.count) && Bridge.equals(this.offset, o.offset);
+        },
+
+        $clone: function (to) { return this; }
     });
 
     // @source KeyValuePair.js
@@ -11451,14 +12058,16 @@ Bridge.Class.addExtend(System.Boolean, [System.IComparable$1(System.Boolean), Sy
     Bridge.define('System.Collections.Generic.IEnumerator$1', function (T) {
         return {
             inherits: [System.Collections.IEnumerator],
-            $kind: "interface"
+            $kind: "interface",
+            $variance: [1]
         };
     });
 
     Bridge.define('System.Collections.Generic.IEnumerable$1', function (T) {
         return {
             inherits: [System.Collections.IEnumerable],
-            $kind: "interface"
+            $kind: "interface",
+            $variance: [1]
         };
     });
 
@@ -11471,7 +12080,8 @@ Bridge.Class.addExtend(System.Boolean, [System.IComparable$1(System.Boolean), Sy
 
     Bridge.define('System.Collections.Generic.IEqualityComparer$1', function (T) {
         return {
-            $kind: "interface"
+            $kind: "interface",
+            $variance: [2]
         };
     });
 
@@ -11491,7 +12101,8 @@ Bridge.Class.addExtend(System.Boolean, [System.IComparable$1(System.Boolean), Sy
 
     Bridge.define('System.Collections.Generic.IComparer$1', function (T) {
         return {
-            $kind: "interface"
+            $kind: "interface",
+            $variance: [2]
         };
     });
 
@@ -11781,6 +12392,19 @@ Bridge.Class.addExtend(System.Boolean, [System.IComparable$1(System.Boolean), Sy
 
         return Bridge.compare(x, y);
     });
+
+    System.Collections.Generic.Comparer$1.get = function (obj, T) {
+        var m;
+        if (T && (m = obj["System$Collections$Generic$IComparer$1$" + Bridge.getTypeAlias(T) + "$compare"])) {
+            return m;
+        }
+
+        if (m = obj["System$Collections$Generic$IComparer$1$compare"]) {
+            return m;
+        }
+
+        return obj.compare;
+    };
 
     // @source Dictionary.js
 
@@ -12204,412 +12828,889 @@ Bridge.Class.addExtend(System.Boolean, [System.IComparable$1(System.Boolean), Sy
         };
     });
 
-    // @source List.js
+    // @source enumerator.js
 
-    Bridge.define('System.Collections.Generic.List$1', function (T) {
-        return {
-            inherits: [System.Collections.Generic.IList$1(T), System.Collections.IList,
-                System.Collections.Generic.IReadOnlyCollection$1(T), System.Collections.Generic.IReadOnlyList$1(T)],
-
-            config: {
-                properties: {
-                  Count: {
-                      get: function() {
-                          return this.getCount();
-                      }
-                  },
-
-                  IsReadOnly: {
-                      get: function () {
-                          return this.getIsReadOnly();
-                      }
-                  },
-
-                  Capacity: {
-                      get: function() {
-                          return this._capacity;
-                      },
-
-                      set: function (value) {
-                          if (value < this.items.length) {
-                              throw new System.ArgumentOutOfRangeException("Capacity is set to a value that is less than Count.");
-                          }
-
-                          this._capacity = value;
-                      }
-                  }
-                },
-                alias: [
-                "getItem", "System$Collections$Generic$IList$1$" + Bridge.getTypeAlias(T) + "$getItem",
-                "getItem", "System$Collections$IList$getItem",
-                "setItem", "System$Collections$Generic$IList$1$" + Bridge.getTypeAlias(T) + "$setItem",
-                "setItem", "System$Collections$IList$setItem",
-                "getCount", "System$Collections$Generic$ICollection$1$" + Bridge.getTypeAlias(T) + "$getCount",
-                "getCount", "System$Collections$ICollection$getCount",
-                "Count", "System$Collections$Generic$ICollection$1$" + Bridge.getTypeAlias(T) + "$Count",
-                "Count", "System$Collections$ICollection$Count",
-                "getIsReadOnly", "System$Collections$Generic$ICollection$1$" + Bridge.getTypeAlias(T) + "$getIsReadOnly",
-                "getIsReadOnly", "System$Collections$IList$getIsReadOnly",
-                "IsReadOnly", "System$Collections$Generic$ICollection$1$" + Bridge.getTypeAlias(T) + "$IsReadOnly",
-                "IsReadOnly", "System$Collections$IList$IsReadOnly",
-                "add", "System$Collections$Generic$ICollection$1$" + Bridge.getTypeAlias(T) + "$add",
-                "add", "System$Collections$IList$add",
-                "clear", "System$Collections$Generic$ICollection$1$" + Bridge.getTypeAlias(T) + "$clear",
-                "clear", "System$Collections$IList$clear",
-                "contains", "System$Collections$Generic$ICollection$1$" + Bridge.getTypeAlias(T) + "$contains",
-                "contains", "System$Collections$IList$contains",
-                "copyTo", "System$Collections$Generic$ICollection$1$" + Bridge.getTypeAlias(T) + "$copyTo",
-                "copyTo", "System$Collections$ICollection$copyTo",
-                "getEnumerator", ["System$Collections$Generic$IEnumerable$1$" + Bridge.getTypeAlias(T) + "$getEnumerator", "System$Collections$Generic$IEnumerable$1$getEnumerator"],
-                "getEnumerator", "System$Collections$IEnumerable$getEnumerator",
-                "indexOf", "System$Collections$Generic$IList$1$" + Bridge.getTypeAlias(T) + "$indexOf",
-                "indexOf", "System$Collections$IList$indexOf",
-                "insert", "System$Collections$Generic$IList$1$" + Bridge.getTypeAlias(T) + "$insert",
-                "insert", "System$Collections$IList$insert",
-                "remove", "System$Collections$Generic$ICollection$1$" + Bridge.getTypeAlias(T) + "$remove",
-                "remove", "System$Collections$IList$remove",
-                "removeAt", "System$Collections$Generic$IList$1$" + Bridge.getTypeAlias(T) + "$removeAt",
-                "removeAt", "System$Collections$IList$removeAt"
-                ]
+    Bridge.define("System.Collections.Generic.List$1.Enumerator", function (T) { return {
+        inherits: [System.Collections.Generic.IEnumerator$1(T),System.Collections.IEnumerator],
+        $kind: "struct",
+        statics: {
+            methods: {
+                getDefaultValue: function () { return new (System.Collections.Generic.List$1.Enumerator(T))(); }
+            }
+        },
+        fields: {
+            list: null,
+            index: 0,
+            version: 0,
+            current: Bridge.getDefaultValue(T)
+        },
+        props: {
+            Current: {
+                get: function () {
+                    return this.current;
+                }
             },
-
-            toJSON: function() {
-                return this.items;
-            },
-
-            ctor: function (obj) {
+            System$Collections$IEnumerator$Current: {
+                get: function () {
+                    if (this.index === 0 || this.index === ((this.list._size + 1) | 0)) {
+                        throw new System.InvalidOperationException();
+                    }
+                    return this.Current;
+                }
+            }
+        },
+        alias: [
+            "dispose", "System$IDisposable$dispose",
+            "moveNext", "System$Collections$IEnumerator$moveNext",
+            "Current", ["System$Collections$Generic$IEnumerator$1$" + Bridge.getTypeAlias(T) + "$Current$1", "System$Collections$Generic$IEnumerator$1$Current$1"]
+        ],
+        ctors: {
+            $ctor1: function (list) {
                 this.$initialize();
+                this.list = list;
+                this.index = 0;
+                this.version = list._version;
+                this.current = Bridge.getDefaultValue(T);
+            },
+            ctor: function () {
+                this.$initialize();
+            }
+        },
+        methods: {
+            dispose: function () { },
+            moveNext: function () {
 
-                if (!Bridge.isDefined(obj)) {
-                    this.items = [];
-                } else if (Object.prototype.toString.call(obj) === '[object Array]') {
-                    this.items = System.Array.clone(obj);
-                } else if (Bridge.is(obj, System.Collections.IEnumerable)) {
-                    this.items = Bridge.toArray(obj);
+                var localList = this.list;
+
+                if (this.version === localList._version && ((this.index >>> 0) < (localList._size >>> 0))) {
+                    this.current = localList._items[System.Array.index(this.index, localList._items)];
+                    this.index = (this.index + 1) | 0;
+                    return true;
+                }
+                return this.moveNextRare();
+            },
+            moveNextRare: function () {
+                if (this.version !== this.list._version) {
+                    throw new System.InvalidOperationException();
+                }
+
+                this.index = (this.list._size + 1) | 0;
+                this.current = Bridge.getDefaultValue(T);
+                return false;
+            },
+            System$Collections$IEnumerator$reset: function () {
+                if (this.version !== this.list._version) {
+                    throw new System.InvalidOperationException();
+                }
+
+                this.index = 0;
+                this.current = Bridge.getDefaultValue(T);
+            },
+            getHashCode: function () {
+                var h = Bridge.addHash([3788985113, this.list, this.index, this.version, this.current]);
+                return h;
+            },
+            equals: function (o) {
+                if (!Bridge.is(o, System.Collections.Generic.List$1.Enumerator(T))) {
+                    return false;
+                }
+                return Bridge.equals(this.list, o.list) && Bridge.equals(this.index, o.index) && Bridge.equals(this.version, o.version) && Bridge.equals(this.current, o.current);
+            },
+            $clone: function (to) {
+                var s = to || new (System.Collections.Generic.List$1.Enumerator(T))();
+                s.list = this.list;
+                s.index = this.index;
+                s.version = this.version;
+                s.current = this.current;
+                return s;
+            }
+        }
+    }; });
+
+    // @source list.js
+
+    Bridge.define("System.Collections.Generic.List$1", function (T) { return {
+        inherits: [System.Collections.Generic.IList$1(T),System.Collections.IList,System.Collections.Generic.IReadOnlyList$1(T)],
+        statics: {
+            fields: {
+                _defaultCapacity: 0,
+                _emptyArray: null
+            },
+            ctors: {
+                init: function () {
+                    this._defaultCapacity = 4;
+                    this._emptyArray = System.Array.init(0, function (){
+                        return Bridge.getDefaultValue(T);
+                    }, T);
+                }
+            },
+            methods: {
+                isCompatibleObject: function (value) {
+                    // Non-null values are fine.  Only accept nulls if T is a class or Nullable<U>.
+                    // Note that default(T) is not equal to null for value types except when T is Nullable<U>.
+                    return ((Bridge.is(value, T)) || (value == null && Bridge.getDefaultValue(T) == null));
+                }
+            }
+        },
+        fields: {
+            _items: null,
+            _size: 0,
+            _version: 0
+        },
+        props: {
+            Capacity: {
+                get: function () {
+                    return this._items.length;
+                },
+                set: function (value) {
+                    if (value < this._size) {
+                        throw new System.ArgumentOutOfRangeException("value");
+                    }
+
+                    if (value !== this._items.length) {
+                        if (value > 0) {
+                            var newItems = System.Array.init(value, function (){
+                                return Bridge.getDefaultValue(T);
+                            }, T);
+                            if (this._size > 0) {
+                                System.Array.copy(this._items, 0, newItems, 0, this._size);
+                            }
+                            this._items = newItems;
+                        } else {
+                            this._items = System.Collections.Generic.List$1(T)._emptyArray;
+                        }
+                    }
+                }
+            },
+            Count: {
+                get: function () {
+                    return this._size;
+                }
+            },
+            System$Collections$Generic$ICollection$1$IsReadOnly: {
+                get: function () {
+                    return false;
+                }
+            },
+            System$Collections$IList$IsReadOnly: {
+                get: function () {
+                    return false;
+                }
+            }
+        },
+        alias: [
+            "Count", "System$Collections$Generic$IReadOnlyCollection$1$" + Bridge.getTypeAlias(T) + "$Count",
+            "Count", "System$Collections$ICollection$Count",
+            "Count", "System$Collections$Generic$ICollection$1$" + Bridge.getTypeAlias(T) + "$Count",
+            "System$Collections$Generic$ICollection$1$IsReadOnly", "System$Collections$Generic$ICollection$1$" + Bridge.getTypeAlias(T) + "$IsReadOnly",
+            "getItem", "System$Collections$Generic$IReadOnlyList$1$" + Bridge.getTypeAlias(T) + "$getItem",
+            "setItem", "System$Collections$Generic$IReadOnlyList$1$" + Bridge.getTypeAlias(T) + "$setItem",
+            "getItem", "System$Collections$Generic$IList$1$" + Bridge.getTypeAlias(T) + "$getItem",
+            "setItem", "System$Collections$Generic$IList$1$" + Bridge.getTypeAlias(T) + "$setItem",
+            "add", "System$Collections$Generic$ICollection$1$" + Bridge.getTypeAlias(T) + "$add",
+            "clear", "System$Collections$IList$clear",
+            "clear", "System$Collections$Generic$ICollection$1$" + Bridge.getTypeAlias(T) + "$clear",
+            "contains", "System$Collections$Generic$ICollection$1$" + Bridge.getTypeAlias(T) + "$contains",
+            "copyTo", "System$Collections$Generic$ICollection$1$" + Bridge.getTypeAlias(T) + "$copyTo",
+            "System$Collections$Generic$IEnumerable$1$getEnumerator", "System$Collections$Generic$IEnumerable$1$" + Bridge.getTypeAlias(T) + "$getEnumerator",
+            "indexOf", "System$Collections$Generic$IList$1$" + Bridge.getTypeAlias(T) + "$indexOf",
+            "insert", "System$Collections$Generic$IList$1$" + Bridge.getTypeAlias(T) + "$insert",
+            "remove", "System$Collections$Generic$ICollection$1$" + Bridge.getTypeAlias(T) + "$remove",
+            "removeAt", "System$Collections$IList$removeAt",
+            "removeAt", "System$Collections$Generic$IList$1$" + Bridge.getTypeAlias(T) + "$removeAt"
+        ],
+        ctors: {
+            ctor: function () {
+                this.$initialize();
+                this._items = System.Collections.Generic.List$1(T)._emptyArray;
+            },
+            $ctor2: function (capacity) {
+                this.$initialize();
+                if (capacity < 0) {
+                    throw new System.ArgumentOutOfRangeException("capacity");
+                }
+
+                if (capacity === 0) {
+                    this._items = System.Collections.Generic.List$1(T)._emptyArray;
                 } else {
-                    this.items = [];
+                    this._items = System.Array.init(capacity, function (){
+                        return Bridge.getDefaultValue(T);
+                    }, T);
+                }
+            },
+            $ctor1: function (collection) {
+                this.$initialize();
+                if (collection == null) {
+                    throw new System.ArgumentNullException("collection");
                 }
 
-                if (Bridge.isNumber(obj)) {
-                    this._capacity = obj;
+                var c = Bridge.as(collection, System.Collections.Generic.ICollection$1(T));
+                if (c != null) {
+                    var count = System.Array.getCount(c, T);
+                    if (count === 0) {
+                        this._items = System.Collections.Generic.List$1(T)._emptyArray;
+                    } else {
+                        this._items = System.Array.init(count, function (){
+                            return Bridge.getDefaultValue(T);
+                        }, T);
+                        System.Array.copyTo(c, this._items, 0, T);
+                        this._size = count;
+                    }
                 } else {
-                    this._capacity = this.items.length;
+                    this._size = 0;
+                    this._items = System.Collections.Generic.List$1(T)._emptyArray;
+                    // This enumerable could be empty.  Let Add allocate a new array, if needed.
+                    // Note it will also go to _defaultCapacity first, not 1, then 2, etc.
+
+                    var en = Bridge.getEnumerator(collection, T);
+                    try {
+                        while (en.System$Collections$IEnumerator$moveNext()) {
+                            this.add(en[Bridge.geti(en, "System$Collections$Generic$IEnumerator$1$" + Bridge.getTypeAlias(T) + "$Current$1", "System$Collections$Generic$IEnumerator$1$Current$1")]);
+                        }
+                    }
+                    finally {
+                        if (Bridge.hasValue(en)) {
+                            en.System$IDisposable$dispose();
+                        }
+                    }
                 }
-                
-                this.clear.$clearCallbacks = [];
-            },
-
-            checkIndex: function (index, message) {
-                if (isNaN(index) || index < 0 || index >= this.items.length) {
-                    throw new System.ArgumentOutOfRangeException(message || 'Index out of range');
-                }
-            },
-
-            getCount: function () {
-                return this.items.length;
-            },
-
-            getIsReadOnly: function () {
-                return !!this.readOnly;
-            },
-
-            get: function (index) {
-                this.checkIndex(index);
-
-                return this.items[index];
-            },
-
+            }
+        },
+        methods: {
             getItem: function (index) {
-                return this.get(index);
+                // Following trick can reduce the range check by one
+                if ((index >>> 0) >= (this._size >>> 0)) {
+                    throw new System.ArgumentOutOfRangeException();
+                }
+                return this._items[System.Array.index(index, this._items)];
             },
-
-            set: function (index, value) {
-                this.checkReadOnly();
-                this.checkIndex(index);
-                this.items[index] = value;
-            },
-
             setItem: function (index, value) {
-                this.set(index, value);
+                if ((index >>> 0) >= (this._size >>> 0)) {
+                    throw new System.ArgumentOutOfRangeException();
+                }
+                this._items[System.Array.index(index, this._items)] = value;
+                this._version = (this._version + 1) | 0;
             },
+            System$Collections$IList$getItem: function (index) {
+                return this.getItem(index);
+            },
+            System$Collections$IList$setItem: function (index, value) {
+                if (value == null && !(Bridge.getDefaultValue(T) == null)) {
+                    throw new System.ArgumentNullException("value");
+                }
 
-            ensureCapacity: function(min) {
-                if (this.items.length < min) {
-                    var newCapacity = this.items.length == 0 ? 4 : this.items.length * 2;
+                try {
+                    this.setItem(index, Bridge.cast(Bridge.unbox(value), T));
+                }
+                catch ($e1) {
+                    $e1 = System.Exception.create($e1);
+                    if (Bridge.is($e1, System.InvalidCastException)) {
+                        throw new System.ArgumentException("value");
+                    } else {
+                        throw $e1;
+                    }
+                }
+            },
+            add: function (item) {
+                if (this._size === this._items.length) {
+                    this.ensureCapacity(((this._size + 1) | 0));
+                }
+                this._items[System.Array.index(Bridge.identity(this._size, (this._size = (this._size + 1) | 0)), this._items)] = item;
+                this._version = (this._version + 1) | 0;
+            },
+            System$Collections$IList$add: function (item) {
+                if (item == null && !(Bridge.getDefaultValue(T) == null)) {
+                    throw new System.ArgumentNullException("item");
+                }
+
+                try {
+                    this.add(Bridge.cast(Bridge.unbox(item), T));
+                }
+                catch ($e1) {
+                    $e1 = System.Exception.create($e1);
+                    if (Bridge.is($e1, System.InvalidCastException)) {
+                        throw new System.ArgumentException("item");
+                    } else {
+                        throw $e1;
+                    }
+                }
+
+                return ((this.Count - 1) | 0);
+            },
+            addRange: function (collection) {
+                this.insertRange(this._size, collection);
+            },
+            asReadOnly: function () {
+                return new (System.Collections.ObjectModel.ReadOnlyCollection$1(T))(this);
+            },
+            binarySearch$2: function (index, count, item, comparer) {
+                if (index < 0) {
+                    throw new System.ArgumentOutOfRangeException("index");
+                }
+                if (count < 0) {
+                    throw new System.ArgumentOutOfRangeException("count");
+                }
+                if (((this._size - index) | 0) < count) {
+                    throw new System.ArgumentException();
+                }
+
+                return System.Array.binarySearch(this._items, index, count, item, comparer);
+            },
+            binarySearch: function (item) {
+                return this.binarySearch$2(0, this.Count, item, null);
+            },
+            binarySearch$1: function (item, comparer) {
+                return this.binarySearch$2(0, this.Count, item, comparer);
+            },
+            clear: function () {
+                if (this._size > 0) {
+                    System.Array.fill(this._items, Bridge.getDefaultValue(T), 0, this._size); // Don't need to doc this but we clear the elements so that the gc can reclaim the references.
+                    this._size = 0;
+                }
+                this._version = (this._version + 1) | 0;
+            },
+            contains: function (item) {
+                if (item == null) {
+                    for (var i = 0; i < this._size; i = (i + 1) | 0) {
+                        if (this._items[System.Array.index(i, this._items)] == null) {
+                            return true;
+                        }
+                    }
+                    return false;
+                } else {
+                    var c = System.Collections.Generic.EqualityComparer$1(T).def;
+                    for (var i1 = 0; i1 < this._size; i1 = (i1 + 1) | 0) {
+                        if (c.equals2(this._items[System.Array.index(i1, this._items)], item)) {
+                            return true;
+                        }
+                    }
+                    return false;
+                }
+            },
+            System$Collections$IList$contains: function (item) {
+                if (System.Collections.Generic.List$1(T).isCompatibleObject(item)) {
+                    return this.contains(Bridge.cast(Bridge.unbox(item), T));
+                }
+                return false;
+            },
+            convertAll: function (TOutput, converter) {
+                if (Bridge.staticEquals(converter, null)) {
+                    throw new System.ArgumentNullException("converter");
+                }
+
+                var list = new (System.Collections.Generic.List$1(TOutput)).$ctor2(this._size);
+                for (var i = 0; i < this._size; i = (i + 1) | 0) {
+                    list._items[System.Array.index(i, list._items)] = converter(this._items[System.Array.index(i, this._items)]);
+                }
+                list._size = this._size;
+                return list;
+            },
+            copyTo$1: function (array) {
+                this.copyTo(array, 0);
+            },
+            System$Collections$ICollection$copyTo: function (array, arrayIndex) {
+                if ((array != null) && (System.Array.getRank(array) !== 1)) {
+                    throw new System.ArgumentException("array");
+                }
+
+                System.Array.copy(this._items, 0, array, arrayIndex, this._size);
+            },
+            copyTo$2: function (index, array, arrayIndex, count) {
+                if (((this._size - index) | 0) < count) {
+                    throw new System.ArgumentException();
+                }
+
+                // Delegate rest of error checking to Array.Copy.
+                System.Array.copy(this._items, index, array, arrayIndex, count);
+            },
+            copyTo: function (array, arrayIndex) {
+                // Delegate rest of error checking to Array.Copy.
+                System.Array.copy(this._items, 0, array, arrayIndex, this._size);
+            },
+            ensureCapacity: function (min) {
+                if (this._items.length < min) {
+                    var newCapacity = this._items.length === 0 ? System.Collections.Generic.List$1(T)._defaultCapacity : Bridge.Int.mul(this._items.length, 2);
+                    // Allow the list to grow to maximum possible capacity (~2G elements) before encountering overflow.
+                    // Note that this check works even when _items.Length overflowed thanks to the (uint) cast
+                    if ((newCapacity >>> 0) > 2146435071) {
+                        newCapacity = 2146435071;
+                    }
+                    if (newCapacity < min) {
+                        newCapacity = min;
+                    }
                     this.Capacity = newCapacity;
                 }
             },
-
-            trimExcess: function () {
-                var threshold = Bridge.Int.clip32(this.Capacity * 0.9);
-                if (this.items.length < threshold) {
-                    this.Capacity = this.items.length;                
-                }
-            }, 
-
-            add: function (value) {
-                this.checkReadOnly();
-                this.ensureCapacity(this.items.length + 1);
-                this.items.push(value);
+            exists: function (match) {
+                return this.findIndex$2(match) !== -1;
             },
-
-            addRange: function (items) {
-                this.checkReadOnly();
-
-                var array = Bridge.toArray(items),
-                    i,
-                    len;
-
-                this.ensureCapacity(this.items.length + array.length);
-
-                for (i = 0, len = array.length; i < len; ++i) {
-                    this.items.push(array[i]);
+            find: function (match) {
+                if (Bridge.staticEquals(match, null)) {
+                    throw new System.ArgumentNullException("match");
                 }
+
+                for (var i = 0; i < this._size; i = (i + 1) | 0) {
+                    if (match(this._items[System.Array.index(i, this._items)])) {
+                        return this._items[System.Array.index(i, this._items)];
+                    }
+                }
+                return Bridge.getDefaultValue(T);
             },
-
-            clear: function () {
-                this.checkReadOnly();
-                this.items = [];
-
-                for (var i = 0; i < this.clear.$clearCallbacks.length; i++) {
-                    this.clear.$clearCallbacks[i](this);
+            findAll: function (match) {
+                if (Bridge.staticEquals(match, null)) {
+                    throw new System.ArgumentNullException("match");
                 }
+
+                var list = new (System.Collections.Generic.List$1(T)).ctor();
+                for (var i = 0; i < this._size; i = (i + 1) | 0) {
+                    if (match(this._items[System.Array.index(i, this._items)])) {
+                        list.add(this._items[System.Array.index(i, this._items)]);
+                    }
+                }
+                return list;
             },
-
-            onClear: function(callback) {
-                this.clear.$clearCallbacks.push(callback);
+            findIndex$2: function (match) {
+                return this.findIndex(0, this._size, match);
             },
-
-            indexOf: function (item, startIndex) {
-                var i, el;
-
-                if (!Bridge.isDefined(startIndex)) {
-                    startIndex = 0;
+            findIndex$1: function (startIndex, match) {
+                return this.findIndex(startIndex, ((this._size - startIndex) | 0), match);
+            },
+            findIndex: function (startIndex, count, match) {
+                if ((startIndex >>> 0) > (this._size >>> 0)) {
+                    throw new System.ArgumentOutOfRangeException("startIndex");
                 }
 
-                if (startIndex !== 0) {
-                    this.checkIndex(startIndex);
+                if (count < 0 || startIndex > ((this._size - count) | 0)) {
+                    throw new System.ArgumentOutOfRangeException("count");
                 }
 
-                for (i = startIndex; i < this.items.length; i++) {
-                    el = this.items[i];
+                if (Bridge.staticEquals(match, null)) {
+                    throw new System.ArgumentNullException("match");
+                }
 
-                    if (System.Collections.Generic.EqualityComparer$1.$default.equals2(el, item)) {
+                var endIndex = (startIndex + count) | 0;
+                for (var i = startIndex; i < endIndex; i = (i + 1) | 0) {
+                    if (match(this._items[System.Array.index(i, this._items)])) {
                         return i;
                     }
                 }
-
                 return -1;
             },
-
-            insertRange: function (index, items) {
-                this.checkReadOnly();
-
-                if (index !== this.items.length) {
-                    this.checkIndex(index);
+            findLast: function (match) {
+                if (Bridge.staticEquals(match, null)) {
+                    throw new System.ArgumentNullException("match");
                 }
 
-                var array = Bridge.toArray(items);
-                this.ensureCapacity(this.items.length + array.length);
-                for (var i = 0; i < array.length; i++) {
-                    this.insert(index++, array[i]);
+                for (var i = (this._size - 1) | 0; i >= 0; i = (i - 1) | 0) {
+                    if (match(this._items[System.Array.index(i, this._items)])) {
+                        return this._items[System.Array.index(i, this._items)];
+                    }
                 }
+                return Bridge.getDefaultValue(T);
             },
-
-            contains: function (item) {
-                return this.indexOf(item) > -1;
+            findLastIndex$2: function (match) {
+                return this.findLastIndex(((this._size - 1) | 0), this._size, match);
             },
-
-            copyTo: function (array, arrayIndex) {
-                System.Array.copy(this.items, 0, array, arrayIndex, this.items.length);
+            findLastIndex$1: function (startIndex, match) {
+                return this.findLastIndex(startIndex, ((startIndex + 1) | 0), match);
             },
-
-            getEnumerator: function () {
-                return new Bridge.ArrayEnumerator(this.items, T);
-            },
-
-            getRange: function (index, count) {
-                if (isNaN(index) || index < 0) {
-                    throw new System.ArgumentOutOfRangeException("index out of range");
+            findLastIndex: function (startIndex, count, match) {
+                if (Bridge.staticEquals(match, null)) {
+                    throw new System.ArgumentNullException("match");
                 }
 
-                if (isNaN(count) || count < 0) {
-                    throw new System.ArgumentOutOfRangeException("count out of range");
-                }
-
-                if (this.items.length - index < count) {
-                    throw new System.ArgumentException("Offset and length were out of bounds for the array or count is greater than the number of elements from index tothe end of the source collection.");
-                }
-
-                var items = [];
-
-                for (var i = 0; i < count; i++) {
-                    items[i] = this.items[index + i];
-                }
-
-                var list = new (System.Collections.Generic.List$1(T))();
-                list.items = items;
-
-                return list;
-            },
-
-            insert: function (index, item) {
-                this.checkReadOnly();
-
-                if (index !== this.items.length) {
-                    this.checkIndex(index);
-                }
-
-                if (Bridge.isArray(item)) {
-                    this.ensureCapacity(this.items.length + item.length);
-                    for (var i = 0; i < item.length; i++) {
-                        this.insert(index++, item[i]);
+                if (this._size === 0) {
+                    // Special case for 0 length List
+                    if (startIndex !== -1) {
+                        throw new System.ArgumentOutOfRangeException("startIndex");
                     }
                 } else {
-                    this.ensureCapacity(this.items.length + 1);
-                    this.items.splice(index, 0, item);
-                }
-            },
-
-            join: function (delimeter) {
-                return this.items.join(delimeter);
-            },
-
-            lastIndexOf: function (item, fromIndex) {
-                if (!Bridge.isDefined(fromIndex)) {
-                    fromIndex = this.items.length - 1;
-                }
-
-                if (fromIndex !== 0) {
-                    this.checkIndex(fromIndex);
-                }
-
-                for (var i = fromIndex; i >= 0; i--) {
-                    if (item === this.items[i]) {
-                        return i;
+                    // Make sure we're not out of range
+                    if ((startIndex >>> 0) >= (this._size >>> 0)) {
+                        throw new System.ArgumentOutOfRangeException("startIndex");
                     }
                 }
 
+                // 2nd have of this also catches when startIndex == MAXINT, so MAXINT - 0 + 1 == -1, which is < 0.
+                if (count < 0 || ((((startIndex - count) | 0) + 1) | 0) < 0) {
+                    throw new System.ArgumentOutOfRangeException("count");
+                }
+
+                var endIndex = (startIndex - count) | 0;
+                for (var i = startIndex; i > endIndex; i = (i - 1) | 0) {
+                    if (match(this._items[System.Array.index(i, this._items)])) {
+                        return i;
+                    }
+                }
                 return -1;
             },
-
-            remove: function (item) {
-                this.checkReadOnly();
-
-                var index = this.indexOf(item);
-
-                if (index < 0) {
-                    return false;
+            forEach: function (action) {
+                if (Bridge.staticEquals(action, null)) {
+                    throw new System.ArgumentNullException("match");
                 }
 
-                this.checkIndex(index);
-                this.items.splice(index, 1);
+                var version = this._version;
+
+                for (var i = 0; i < this._size; i = (i + 1) | 0) {
+                    if (version !== this._version) {
+                        break;
+                    }
+                    action(this._items[System.Array.index(i, this._items)]);
+                }
+
+                if (version !== this._version) {
+                    throw new System.InvalidOperationException();
+                }
+            },
+            getEnumerator: function () {
+                return new (System.Collections.Generic.List$1.Enumerator(T)).$ctor1(this);
+            },
+            System$Collections$Generic$IEnumerable$1$getEnumerator: function () {
+                return new (System.Collections.Generic.List$1.Enumerator(T)).$ctor1(this).$clone();
+            },
+            System$Collections$IEnumerable$getEnumerator: function () {
+                return new (System.Collections.Generic.List$1.Enumerator(T)).$ctor1(this).$clone();
+            },
+            getRange: function (index, count) {
+                if (index < 0) {
+                    throw new System.ArgumentOutOfRangeException("index");
+                }
+
+                if (count < 0) {
+                    throw new System.ArgumentOutOfRangeException("count");
+                }
+
+                if (((this._size - index) | 0) < count) {
+                    throw new System.ArgumentException();
+                }
+
+                var list = new (System.Collections.Generic.List$1(T)).$ctor2(count);
+                System.Array.copy(this._items, index, list._items, 0, count);
+                list._size = count;
+                return list;
+            },
+            indexOf: function (item) {
+                return System.Array.indexOfT(this._items, item, 0, this._size);
+            },
+            System$Collections$IList$indexOf: function (item) {
+                if (System.Collections.Generic.List$1(T).isCompatibleObject(item)) {
+                    return this.indexOf(Bridge.cast(Bridge.unbox(item), T));
+                }
+                return -1;
+            },
+            indexOf$1: function (item, index) {
+                if (index > this._size) {
+                    throw new System.ArgumentOutOfRangeException("index");
+                }
+                return System.Array.indexOfT(this._items, item, index, ((this._size - index) | 0));
+            },
+            indexOf$2: function (item, index, count) {
+                if (index > this._size) {
+                    throw new System.ArgumentOutOfRangeException("index");
+                }
+
+                if (count < 0 || index > ((this._size - count) | 0)) {
+                    throw new System.ArgumentOutOfRangeException("count");
+                }
+
+                return System.Array.indexOfT(this._items, item, index, count);
+            },
+            insert: function (index, item) {
+                // Note that insertions at the end are legal.
+                if ((index >>> 0) > (this._size >>> 0)) {
+                    throw new System.ArgumentOutOfRangeException("index");
+                }
+                if (this._size === this._items.length) {
+                    this.ensureCapacity(((this._size + 1) | 0));
+                }
+                if (index < this._size) {
+                    System.Array.copy(this._items, index, this._items, ((index + 1) | 0), ((this._size - index) | 0));
+                }
+                this._items[System.Array.index(index, this._items)] = item;
+                this._size = (this._size + 1) | 0;
+                this._version = (this._version + 1) | 0;
+            },
+            System$Collections$IList$insert: function (index, item) {
+                if (item == null && !(Bridge.getDefaultValue(T) == null)) {
+                    throw new System.ArgumentNullException("item");
+                }
+
+                try {
+                    this.insert(index, Bridge.cast(Bridge.unbox(item), T));
+                }
+                catch ($e1) {
+                    $e1 = System.Exception.create($e1);
+                    if (Bridge.is($e1, System.InvalidCastException)) {
+                        throw new System.ArgumentException("item");
+                    } else {
+                        throw $e1;
+                    }
+                }
+            },
+            insertRange: function (index, collection) {
+                if (collection == null) {
+                    throw new System.ArgumentNullException("collection");
+                }
+
+                if ((index >>> 0) > (this._size >>> 0)) {
+                    throw new System.ArgumentOutOfRangeException("index");
+                }
+
+                var c = Bridge.as(collection, System.Collections.Generic.ICollection$1(T));
+                if (c != null) { // if collection is ICollection<T>
+                    var count = System.Array.getCount(c, T);
+                    if (count > 0) {
+                        this.ensureCapacity(((this._size + count) | 0));
+                        if (index < this._size) {
+                            System.Array.copy(this._items, index, this._items, ((index + count) | 0), ((this._size - index) | 0));
+                        }
+
+                        // If we're inserting a List into itself, we want to be able to deal with that.
+                        if (Bridge.referenceEquals(this, c)) {
+                            // Copy first part of _items to insert location
+                            System.Array.copy(this._items, 0, this._items, index, index);
+                            // Copy last part of _items back to inserted location
+                            System.Array.copy(this._items, ((index + count) | 0), this._items, Bridge.Int.mul(index, 2), ((this._size - index) | 0));
+                        } else {
+                            var itemsToInsert = System.Array.init(count, function (){
+                                return Bridge.getDefaultValue(T);
+                            }, T);
+                            System.Array.copyTo(c, itemsToInsert, 0, T);
+                            System.Array.copy(itemsToInsert, 0, this._items, index, itemsToInsert.length);
+                        }
+                        this._size = (this._size + count) | 0;
+                    }
+                } else {
+                    var en = Bridge.getEnumerator(collection, T);
+                    try {
+                        while (en.System$Collections$IEnumerator$moveNext()) {
+                            this.insert(Bridge.identity(index, (index = (index + 1) | 0)), en[Bridge.geti(en, "System$Collections$Generic$IEnumerator$1$" + Bridge.getTypeAlias(T) + "$Current$1", "System$Collections$Generic$IEnumerator$1$Current$1")]);
+                        }
+                    }
+                    finally {
+                        if (Bridge.hasValue(en)) {
+                            en.System$IDisposable$dispose();
+                        }
+                    }
+                }
+                this._version = (this._version + 1) | 0;
+            },
+            lastIndexOf: function (item) {
+                if (this._size === 0) { // Special case for empty list
+                    return -1;
+                } else {
+                    return this.lastIndexOf$2(item, ((this._size - 1) | 0), this._size);
+                }
+            },
+            lastIndexOf$1: function (item, index) {
+                if (index >= this._size) {
+                    throw new System.ArgumentOutOfRangeException("index");
+                }
+                return this.lastIndexOf$2(item, index, ((index + 1) | 0));
+            },
+            lastIndexOf$2: function (item, index, count) {
+                if ((this.Count !== 0) && (index < 0)) {
+                    throw new System.ArgumentOutOfRangeException("index");
+                }
+
+                if ((this.Count !== 0) && (count < 0)) {
+                    throw new System.ArgumentOutOfRangeException("count");
+                }
+
+                if (this._size === 0) { // Special case for empty list
+                    return -1;
+                }
+
+                if (index >= this._size) {
+                    throw new System.ArgumentOutOfRangeException("index");
+                }
+
+                if (count > ((index + 1) | 0)) {
+                    throw new System.ArgumentOutOfRangeException("count");
+                }
+
+                return System.Array.lastIndexOfT(this._items, item, index, count);
+            },
+            remove: function (item) {
+                var index = this.indexOf(item);
+                if (index >= 0) {
+                    this.removeAt(index);
+                    return true;
+                }
+
+                return false;
+            },
+            System$Collections$IList$remove: function (item) {
+                if (System.Collections.Generic.List$1(T).isCompatibleObject(item)) {
+                    this.remove(Bridge.cast(Bridge.unbox(item), T));
+                }
+            },
+            removeAll: function (match) {
+                if (Bridge.staticEquals(match, null)) {
+                    throw new System.ArgumentNullException("match");
+                }
+
+                var freeIndex = 0; // the first free slot in items array
+
+                // Find the first item which needs to be removed.
+                while (freeIndex < this._size && !match(this._items[System.Array.index(freeIndex, this._items)])) {
+                    freeIndex = (freeIndex + 1) | 0;
+                }
+                if (freeIndex >= this._size) {
+                    return 0;
+                }
+
+                var current = (freeIndex + 1) | 0;
+                while (current < this._size) {
+                    // Find the first item which needs to be kept.
+                    while (current < this._size && match(this._items[System.Array.index(current, this._items)])) {
+                        current = (current + 1) | 0;
+                    }
+
+                    if (current < this._size) {
+                        // copy item to the free slot.
+                        this._items[System.Array.index(Bridge.identity(freeIndex, (freeIndex = (freeIndex + 1) | 0)), this._items)] = this._items[System.Array.index(Bridge.identity(current, (current = (current + 1) | 0)), this._items)];
+                    }
+                }
+
+                System.Array.fill(this._items, Bridge.getDefaultValue(T), freeIndex, ((this._size - freeIndex) | 0));
+                var result = (this._size - freeIndex) | 0;
+                this._size = freeIndex;
+                this._version = (this._version + 1) | 0;
+                return result;
+            },
+            removeAt: function (index) {
+                if ((index >>> 0) >= (this._size >>> 0)) {
+                    throw new System.ArgumentOutOfRangeException();
+                }
+                this._size = (this._size - 1) | 0;
+                if (index < this._size) {
+                    System.Array.copy(this._items, ((index + 1) | 0), this._items, index, ((this._size - index) | 0));
+                }
+                this._items[System.Array.index(this._size, this._items)] = Bridge.getDefaultValue(T);
+                this._version = (this._version + 1) | 0;
+            },
+            removeRange: function (index, count) {
+                if (index < 0) {
+                    throw new System.ArgumentOutOfRangeException("index");
+                }
+
+                if (count < 0) {
+                    throw new System.ArgumentOutOfRangeException("count");
+                }
+
+                if (((this._size - index) | 0) < count) {
+                    throw new System.ArgumentException();
+                }
+
+                if (count > 0) {
+                    var i = this._size;
+                    this._size = (this._size - count) | 0;
+                    if (index < this._size) {
+                        System.Array.copy(this._items, ((index + count) | 0), this._items, index, ((this._size - index) | 0));
+                    }
+                    System.Array.fill(this._items, Bridge.getDefaultValue(T), this._size, count);
+                    this._version = (this._version + 1) | 0;
+                }
+            },
+            reverse: function () {
+                this.reverse$1(0, this.Count);
+            },
+            reverse$1: function (index, count) {
+                if (index < 0) {
+                    throw new System.ArgumentOutOfRangeException("index");
+                }
+
+                if (count < 0) {
+                    throw new System.ArgumentOutOfRangeException("count");
+                }
+
+                if (((this._size - index) | 0) < count) {
+                    throw new System.ArgumentException();
+                }
+                System.Array.reverse(this._items, index, count);
+                this._version = (this._version + 1) | 0;
+            },
+            sort: function () {
+                this.sort$3(0, this.Count, null);
+            },
+            sort$1: function (comparer) {
+                this.sort$3(0, this.Count, comparer);
+            },
+            sort$3: function (index, count, comparer) {
+                if (index < 0) {
+                    throw new System.ArgumentOutOfRangeException("index");
+                }
+
+                if (count < 0) {
+                    throw new System.ArgumentOutOfRangeException("count");
+                }
+
+                if (((this._size - index) | 0) < count) {
+                    throw new System.ArgumentException();
+                }
+
+                System.Array.sort(this._items, index, count, comparer);
+                this._version = (this._version + 1) | 0;
+            },
+            sort$2: function (comparison) {
+                if (Bridge.staticEquals(comparison, null)) {
+                    throw new System.ArgumentNullException("comparison");
+                }
+
+                if (this._size > 0) {
+                    if (this._items.length === this._size) {
+                        System.Array.sort(this._items, comparison);
+                    } else {
+                        var newItems = System.Array.init(this._size, function (){
+                            return Bridge.getDefaultValue(T);
+                        }, T);
+                        System.Array.copy(this._items, 0, newItems, 0, this._size);
+                        System.Array.sort(newItems, comparison);
+                        System.Array.copy(newItems, 0, this._items, 0, this._size);
+                    }
+                }
+            },
+            toArray: function () {
+
+                var array = System.Array.init(this._size, function (){
+                    return Bridge.getDefaultValue(T);
+                }, T);
+                System.Array.copy(this._items, 0, array, 0, this._size);
+                return array;
+            },
+            trimExcess: function () {
+                var threshold = Bridge.Int.clip32(this._items.length * 0.9);
+                if (this._size < threshold) {
+                    this.Capacity = this._size;
+                }
+            },
+            trueForAll: function (match) {
+                if (Bridge.staticEquals(match, null)) {
+                    throw new System.ArgumentNullException("match");
+                }
+
+                for (var i = 0; i < this._size; i = (i + 1) | 0) {
+                    if (!match(this._items[System.Array.index(i, this._items)])) {
+                        return false;
+                    }
+                }
                 return true;
             },
-
-            removeAt: function (index) {
-                this.checkReadOnly();
-                this.checkIndex(index);
-                this.items.splice(index, 1);
-            },
-
-            removeRange: function (index, count) {
-                this.checkReadOnly();
-                this.checkIndex(index);
-                this.items.splice(index, count);
-            },
-
-            reverse: function () {
-                this.checkReadOnly();
-                this.items.reverse();
-            },
-
-            slice: function (start, end) {
-                this.checkReadOnly();
-
-                var list = new (System.Collections.Generic.List$1(T))();
-                list.items = this.items.slice(start, end);
-
-                return list;
-            },
-
-            sort: function (comparison) {
-                this.checkReadOnly();
-                this.items.sort(comparison || System.Collections.Generic.Comparer$1.$default.compare);
-            },
-
-            splice: function (start, count, items) {
-                this.checkReadOnly();
-                this.items.splice(start, count, items);
-            },
-
-            unshift: function () {
-                this.checkReadOnly();
-                this.items.unshift();
-            },
-
-            toArray: function () {
-                return Bridge.toArray(this);
-            },
-
-            checkReadOnly: function () {
-                if (this.readOnly) {
-                    throw new System.NotSupportedException();
-                }
-            },
-
-            binarySearch: function (index, length, value, comparer) {
-                if (arguments.length === 1) {
-                    value = index;
-                    index = null;
+            toJSON: function () {
+                var newItems = System.Array.init(this._size, function (){
+                    return Bridge.getDefaultValue(T);
+                }, T);
+                if (this._size > 0) {
+                    System.Array.copy(this._items, 0, newItems, 0, this._size);
                 }
 
-                if (arguments.length === 2) {
-                    value = index;
-                    comparer = length;
-                    index = null;
-                    length = null;
-                }
-
-                if (!Bridge.isNumber(index)) {
-                    index = 0;
-                }
-
-                if (!Bridge.isNumber(length)) {
-                    length = this.items.length;
-                }
-
-                if (!comparer) {
-                    comparer = System.Collections.Generic.Comparer$1.$default;
-                }
-
-                return System.Array.binarySearch(this.items, index, length, value, comparer);
-            },
-
-            convertAll: function (TOutput, converter) {
-                if (!Bridge.hasValue(converter)) {
-                    throw new System.ArgumentNullException("converter is null.");
-                }
-
-                var list = new (System.Collections.Generic.List$1(TOutput))();
-                for (var i = 0; i < this.items.length; i++) {
-                    list.items[i] = converter(this.items[i]);
-                }
-
-                return list;
-            },
-
-            forEach: function(action) {
-                if (action == null) {
-                    throw new System.ArgumentNullException("action");
-                }
- 
-                for (var i = 0; i < this.items.length; i++) {
-                    action(this.items[i]);
-                }
+                return newItems;
             }
-        };
-    });
+        }
+    }; });
+
+    // @source List.js
 
     System.Collections.Generic.List$1.getElementType = function (type) {
         var interfaceType;
@@ -12629,32 +13730,198 @@ Bridge.Class.addExtend(System.Boolean, [System.IComparable$1(System.Boolean), Sy
         return interfaceType ? Bridge.Reflection.getGenericArguments(interfaceType)[0] : null;
     };
 
-    Bridge.define('System.Collections.ObjectModel.ReadOnlyCollection$1', function (T) {
-        return {
-            inherits: [System.Collections.Generic.List$1(T), System.Collections.Generic.IReadOnlyList$1(T)],
+    // @source readOnlyCollection.js
+
+    Bridge.define("System.Collections.ObjectModel.ReadOnlyCollection$1", function (T) { return {
+        inherits: [System.Collections.Generic.IList$1(T),System.Collections.IList,System.Collections.Generic.IReadOnlyList$1(T)],
+        statics: {
+            methods: {
+                isCompatibleObject: function (value) {
+                    // Non-null values are fine.  Only accept nulls if T is a class or Nullable<U>.
+                    // Note that default(T) is not equal to null for value types except when T is Nullable<U>. 
+                    return ((Bridge.is(value, T)) || (value == null && Bridge.getDefaultValue(T) == null));
+                }
+            }
+        },
+        fields: {
+            list: null
+        },
+        props: {
+            Count: {
+                get: function () {
+                    return System.Array.getCount(this.list, T);
+                }
+            },
+            Items: {
+                get: function () {
+                    return this.list;
+                }
+            },
+            System$Collections$Generic$ICollection$1$IsReadOnly: {
+                get: function () {
+                    return true;
+                }
+            },
+            System$Collections$IList$IsReadOnly: {
+                get: function () {
+                    return true;
+                }
+            }
+        },
+        alias: [
+            "Count", "System$Collections$Generic$IReadOnlyCollection$1$" + Bridge.getTypeAlias(T) + "$Count",
+            "Count", "System$Collections$ICollection$Count",
+            "Count", "System$Collections$Generic$ICollection$1$" + Bridge.getTypeAlias(T) + "$Count",
+            "getItem", "System$Collections$Generic$IReadOnlyList$1$" + Bridge.getTypeAlias(T) + "$getItem",
+            "contains", "System$Collections$Generic$ICollection$1$" + Bridge.getTypeAlias(T) + "$contains",
+            "copyTo", "System$Collections$Generic$ICollection$1$" + Bridge.getTypeAlias(T) + "$copyTo",
+            "getEnumerator", ["System$Collections$Generic$IEnumerable$1$" + Bridge.getTypeAlias(T) + "$getEnumerator", "System$Collections$Generic$IEnumerable$1$getEnumerator"],
+            "indexOf", "System$Collections$Generic$IList$1$" + Bridge.getTypeAlias(T) + "$indexOf",
+            "System$Collections$Generic$ICollection$1$IsReadOnly", "System$Collections$Generic$ICollection$1$" + Bridge.getTypeAlias(T) + "$IsReadOnly",
+            "System$Collections$Generic$IList$1$getItem", "System$Collections$Generic$IList$1$" + Bridge.getTypeAlias(T) + "$getItem",
+            "System$Collections$Generic$IList$1$setItem", "System$Collections$Generic$IList$1$" + Bridge.getTypeAlias(T) + "$setItem",
+            "System$Collections$Generic$ICollection$1$add", "System$Collections$Generic$ICollection$1$" + Bridge.getTypeAlias(T) + "$add",
+            "System$Collections$Generic$ICollection$1$clear", "System$Collections$Generic$ICollection$1$" + Bridge.getTypeAlias(T) + "$clear",
+            "System$Collections$Generic$IList$1$insert", "System$Collections$Generic$IList$1$" + Bridge.getTypeAlias(T) + "$insert",
+            "System$Collections$Generic$ICollection$1$remove", "System$Collections$Generic$ICollection$1$" + Bridge.getTypeAlias(T) + "$remove",
+            "System$Collections$Generic$IList$1$removeAt", "System$Collections$Generic$IList$1$" + Bridge.getTypeAlias(T) + "$removeAt"
+        ],
+        ctors: {
             ctor: function (list) {
                 this.$initialize();
                 if (list == null) {
                     throw new System.ArgumentNullException("list");
                 }
-
-                System.Collections.Generic.List$1(T).ctor.call(this, []);
-                this.readOnly = true;
-
-                if (Object.prototype.toString.call(list) === '[object Array]') {
-                    this.items = list;
-                } else if (Bridge.is(list, System.Collections.Generic.List$1(T))) {
-                    var me = this;
-                    this.items = list.items;
-                    list.onClear(function(l) {
-                        me.items = l.items;
-                    });
-                } else if (Bridge.is(list, System.Collections.IEnumerable)) {
-                    this.items = Bridge.toArray(list);
-                }
+                this.list = list;
             }
-        };
-    });
+        },
+        methods: {
+            getItem: function (index) {
+                return System.Array.getItem(this.list, index, T);
+            },
+            System$Collections$Generic$IList$1$getItem: function (index) {
+                return System.Array.getItem(this.list, index, T);
+            },
+            System$Collections$Generic$IList$1$setItem: function (index, value) {
+                throw new System.NotSupportedException();
+            },
+            System$Collections$IList$getItem: function (index) {
+                return System.Array.getItem(this.list, index, T);
+            },
+            System$Collections$IList$setItem: function (index, value) {
+                throw new System.NotSupportedException();
+            },
+            contains: function (value) {
+                return System.Array.contains(this.list, value, T);
+            },
+            System$Collections$IList$contains: function (value) {
+                if (System.Collections.ObjectModel.ReadOnlyCollection$1(T).isCompatibleObject(value)) {
+                    return this.contains(Bridge.cast(Bridge.unbox(value), T));
+                }
+                return false;
+            },
+            copyTo: function (array, index) {
+                System.Array.copyTo(this.list, array, index, T);
+            },
+            System$Collections$ICollection$copyTo: function (array, index) {
+                if (array == null) {
+                    throw new System.ArgumentNullException("array");
+                }
+
+                if (System.Array.getRank(array) !== 1) {
+                    throw new System.ArgumentException("array");
+                }
+
+                if (System.Array.getLower(array, 0) !== 0) {
+                    throw new System.ArgumentException("array");
+                }
+
+                if (index < 0) {
+                    throw new System.ArgumentOutOfRangeException("index");
+                }
+
+                if (((array.length - index) | 0) < this.Count) {
+                    throw new System.ArgumentException();
+                }
+
+                var items = Bridge.as(array, System.Array.type(T));
+                if (items != null) {
+                    System.Array.copyTo(this.list, items, index, T);
+                } else {
+                    //
+                    // Catch the obvious case assignment will fail.
+                    // We can found all possible problems by doing the check though.
+                    // For example, if the element type of the Array is derived from T,
+                    // we can't figure out if we can successfully copy the element beforehand.
+                    //
+                    var targetType = (Bridge.getType(array).$elementType || null);
+                    var sourceType = T;
+                    if (!(Bridge.Reflection.isAssignableFrom(targetType, sourceType) || Bridge.Reflection.isAssignableFrom(sourceType, targetType))) {
+                        throw new System.ArgumentException();
+                    }
+
+                    //
+                    // We can't cast array of value type to object[], so we don't support 
+                    // widening of primitive types here.
+                    //
+                    var objects = Bridge.as(array, System.Array.type(System.Object));
+                    if (objects == null) {
+                        throw new System.ArgumentException();
+                    }
+
+                    var count = System.Array.getCount(this.list, T);
+                    for (var i = 0; i < count; i = (i + 1) | 0) {
+                        objects[System.Array.index(Bridge.identity(index, (index = (index + 1) | 0)), objects)] = System.Array.getItem(this.list, i, T);
+                    }
+                }
+            },
+            getEnumerator: function () {
+                return Bridge.getEnumerator(this.list, T);
+            },
+            System$Collections$IEnumerable$getEnumerator: function () {
+                return Bridge.getEnumerator(Bridge.cast(this.list, System.Collections.IEnumerable));
+            },
+            indexOf: function (value) {
+                return System.Array.indexOf(this.list, value, 0, null, T);
+            },
+            System$Collections$IList$indexOf: function (value) {
+                if (System.Collections.ObjectModel.ReadOnlyCollection$1(T).isCompatibleObject(value)) {
+                    return this.indexOf(Bridge.cast(Bridge.unbox(value), T));
+                }
+                return -1;
+            },
+            System$Collections$Generic$ICollection$1$add: function (value) {
+                throw new System.NotSupportedException();
+            },
+            System$Collections$IList$add: function (value) {
+                throw new System.NotSupportedException();
+            },
+            System$Collections$Generic$ICollection$1$clear: function () {
+                throw new System.NotSupportedException();
+            },
+            System$Collections$IList$clear: function () {
+                throw new System.NotSupportedException();
+            },
+            System$Collections$Generic$IList$1$insert: function (index, value) {
+                throw new System.NotSupportedException();
+            },
+            System$Collections$IList$insert: function (index, value) {
+                throw new System.NotSupportedException();
+            },
+            System$Collections$Generic$ICollection$1$remove: function (value) {
+                throw new System.NotSupportedException();
+            },
+            System$Collections$IList$remove: function (value) {
+                throw new System.NotSupportedException();
+            },
+            System$Collections$Generic$IList$1$removeAt: function (index) {
+                throw new System.NotSupportedException();
+            },
+            System$Collections$IList$removeAt: function (index) {
+                throw new System.NotSupportedException();
+            }
+        }
+    }; });
 
     // @source String.js
 
@@ -12664,6 +13931,72 @@ Bridge.define("System.String", {
     statics: {
         $is: function (instance) {
             return typeof (instance) === "string";
+        },
+
+        charCodeAt: function (str, idx) {
+            idx = idx || 0;
+            var code = str.charCodeAt(idx),
+                hi,
+                low;
+
+            if (0xD800 <= code && code <= 0xDBFF) {
+                hi = code;
+                low = str.charCodeAt(idx + 1);
+                if (isNaN(low)) {
+                    throw new System.Exception("High surrogate not followed by low surrogate");
+                }
+
+                return ((hi - 0xD800) * 0x400) + (low - 0xDC00) + 0x10000;
+            }
+
+            if (0xDC00 <= code && code <= 0xDFFF) {
+                return false;
+            }
+
+            return code;
+        },
+
+        fromCharCode: function (codePt) {
+            if (codePt > 0xFFFF) {
+                codePt -= 0x10000;
+                return String.fromCharCode(0xD800 + (codePt >> 10), 0xDC00 + (codePt & 0x3FF));
+            }
+
+            return String.fromCharCode(codePt);
+        },
+
+        fromCharArray: function (chars, startIndex, length) {
+            if (chars == null) {
+                throw new System.ArgumentNullException("chars");
+            }
+
+            if (startIndex < 0) {
+                throw new System.ArgumentOutOfRangeException("startIndex");
+            }
+
+            if (length < 0) {
+                throw new System.ArgumentOutOfRangeException("length");
+            }
+
+            if (chars.length - startIndex < length) {
+                throw new System.ArgumentOutOfRangeException("startIndex");
+            }
+
+            var result = "";
+
+            startIndex = startIndex || 0;
+            length = Bridge.isNumber(length) ? length : chars.length;
+
+            if ((startIndex + length) > chars.length) {
+                length = chars.length - startIndex;
+            }
+
+            for (var i = 0; i < length; i++) {
+                var ch = chars[i + startIndex] | 0;
+                result += String.fromCharCode(ch);
+            }
+
+            return result;
         },
 
         lastIndexOf: function (s, search, startIndex, count) {
@@ -12719,11 +14052,11 @@ Bridge.define("System.String", {
         },
 
         format: function (format, args) {
-            return System.String._format(System.Globalization.CultureInfo.getCurrentCulture(), format, !Array.isArray(args) ? Array.prototype.slice.call(arguments, 1) : args);
+            return System.String._format(System.Globalization.CultureInfo.getCurrentCulture(), format, Array.isArray(args) && arguments.length == 2 ? args : Array.prototype.slice.call(arguments, 1));
         },
 
         formatProvider: function (provider, format, args) {
-            return System.String._format(provider, format, !Array.isArray(args) ? Array.prototype.slice.call(arguments, 2) : args);
+            return System.String._format(provider, format, Array.isArray(args) && arguments.length == 3 ? args : Array.prototype.slice.call(arguments, 2));
         },
 
         _format: function (provider, format, args) {
@@ -13127,6 +14460,10 @@ Bridge.define("System.String", {
             return System.String.trimStart(System.String.trimEnd(str, chars), chars);
         },
 
+        trimStartZeros: function (str) {
+            return str.replace(new RegExp('^[ 0+]+(?=.)'), '');
+        },
+
         concat: function (values) {
             var list = (arguments.length == 1 && Array.isArray(values)) ? values : [].slice.call(arguments),
                 s = "";
@@ -13136,6 +14473,38 @@ Bridge.define("System.String", {
             }
 
             return s;
+        },
+
+        copyTo: function (str, sourceIndex, destination, destinationIndex, count) {
+            if (destination == null) {
+                throw new System.ArgumentNullException("destination");
+            }
+
+            if (str == null) {
+                throw new System.ArgumentNullException("str");
+            }
+
+            if (count < 0) {
+                throw new System.ArgumentOutOfRangeException("count");
+            }
+
+            if (sourceIndex < 0) {
+                throw new System.ArgumentOutOfRangeException("sourceIndex");
+            }
+
+            if (count > str.length - sourceIndex) {
+                throw new System.ArgumentOutOfRangeException("sourceIndex");
+            }
+
+            if (destinationIndex > destination.length - count || destinationIndex < 0) {
+                throw new System.ArgumentOutOfRangeException("destinationIndex");
+            }
+
+            if (count > 0) {
+                for (var i = 0; i < count; i++) {
+                    destination[destinationIndex + i] = str.charCodeAt(sourceIndex + i);
+                }
+            }
         }
     }
 });
@@ -13479,7 +14848,7 @@ Bridge.Class.addExtend(System.String, [System.IComparable$1(System.String), Syst
 
                     throw awaiting ? ex : new System.AggregateException(null, [ex]);
                 case System.Threading.Tasks.TaskStatus.faulted:
-                    throw awaiting ? (this.exception.innerExceptions.getCount() > 0 ? this.exception.innerExceptions.get(0) : null) : this.exception;
+                    throw awaiting ? (this.exception.innerExceptions.Count > 0 ? this.exception.innerExceptions.getItem(0) : null) : this.exception;
                 default:
                     throw new System.InvalidOperationException("Task is not yet completed.");
             }
@@ -13500,12 +14869,14 @@ Bridge.Class.addExtend(System.String, [System.IComparable$1(System.String), Syst
         }
     });
 
-    Bridge.define("System.Threading.Tasks.Task$1", {
-        inherits: [System.Threading.Tasks.Task],
-        ctor: function (action, state) {
-            this.$initialize();
-            System.Threading.Tasks.Task.ctor.call(this, action, state);
-        }
+    Bridge.define("System.Threading.Tasks.Task$1", function (T) {
+        return {
+            inherits: [System.Threading.Tasks.Task],
+            ctor: function(action, state) {
+                this.$initialize();
+                System.Threading.Tasks.Task.ctor.call(this, action, state);
+            }
+        };
     });
 
     Bridge.define("System.Threading.Tasks.TaskStatus", {
@@ -14560,7 +15931,8 @@ Bridge.Class.addExtend(System.String, [System.IComparable$1(System.String), Syst
         },
 
         toChar: function (value, formatProvider, valueTypeCode) {
-            var typeCodes = scope.convert.typeCodes;
+            var typeCodes = scope.convert.typeCodes,
+                isChar = Bridge.is(value, System.Char);
 
             value = Bridge.unbox(value, true);
 
@@ -14580,7 +15952,7 @@ Bridge.Class.addExtend(System.String, [System.IComparable$1(System.String), Syst
                 type = "string";
             }
 
-            if (valueTypeCode !== typeCodes.Object) {
+            if (valueTypeCode !== typeCodes.Object || isChar) {
                 switch (type) {
                     case "boolean":
                         scope.internal.throwInvalidCastEx(typeCodes.Boolean, typeCodes.Char);
@@ -14894,7 +16266,7 @@ Bridge.Class.addExtend(System.String, [System.IComparable$1(System.String), Syst
                     res = new System.UInt64(Bridge.$Long.fromString(str, true, fromBase));
                 }
 
-                if (res.toString(fromBase) !== str) {
+                if (res.toString(fromBase) !== System.String.trimStartZeros(str)) {
                     throw new System.OverflowException("Value was either too large or too small.");
                 }
 
@@ -15463,13 +16835,13 @@ Bridge.Class.addExtend(System.String, [System.IComparable$1(System.String), Syst
                         if (typeCode === typeCodes.Int64) {
                             value = new System.Int64(value);
 
-                            if (str !== value.toString()) {
+                            if (System.String.trimStartZeros(str) !== value.toString()) {
                                 this.throwOverflow(scope.internal.getTypeCodeName(typeCode));
                             }
                         } else if (typeCode === typeCodes.UInt64) {
                             value = new System.UInt64(value);
 
-                            if (str !== value.toString()) {
+                            if (System.String.trimStartZeros(str) !== value.toString()) {
                                 this.throwOverflow(scope.internal.getTypeCodeName(typeCode));
                             }
                         } else {
@@ -16126,7 +17498,7 @@ Bridge.Class.addExtend(System.String, [System.IComparable$1(System.String), Syst
                     var array = buffer.getArray(),
                         count = buffer.getCount(),
                         offset = buffer.getOffset();
- 
+
                     var data = new Uint8Array(count);
 
                     for (var i = 0; i < count; i++) {
@@ -16136,7 +17508,7 @@ Bridge.Class.addExtend(System.String, [System.IComparable$1(System.String), Syst
                     if (messageType === "text") {
                         data = String.fromCharCode.apply(null, data);
                     }
- 
+
                     this.socket.send(data);
                 }
 
@@ -16344,16 +17716,56 @@ Bridge.Class.addExtend(System.String, [System.IComparable$1(System.String), Syst
 
     // @source Uri.js
 
-    Bridge.define("System.Uri", {
-        ctor: function (uriString) {
-            this.$initialize();
-            this.absoluteUri = uriString;
-        },
+Bridge.assembly("System", {}, function ($asm, globals) {
+        "use strict";
 
-        getAbsoluteUri: function () {
-            return this.absoluteUri;
-        }
-    });
+        Bridge.define("System.Uri", {
+            statics: {
+                methods: {
+                    equals: function (uri1, uri2) {
+                        if (uri1 == uri2) {
+                            return true;
+                        }
+
+                        if (uri1 == null || uri2 == null) {
+                            return false;
+                        }
+
+                        return uri2.equals(uri1);
+                    },
+
+                    notEquals: function (uri1, uri2) {
+                        return !System.Uri.equals(uri1, uri2);
+                    }
+                }
+            },
+
+            ctor: function (uriString) {
+                this.$initialize();
+                this.absoluteUri = uriString;
+            },
+
+            getAbsoluteUri: function () {
+                return this.absoluteUri;
+            },
+
+            toJSON: function () {
+                return this.absoluteUri;
+            },
+
+            toString: function () {
+                return this.absoluteUri;
+            },
+
+            equals: function (uri) {
+                if (uri == null || !Bridge.is(uri, System.Uri)) {
+                    return false;
+                }
+
+                return this.absoluteUri === uri.absoluteUri;
+            }
+        });
+    }, true);
 
     // @source Generator.js
 
@@ -18770,7 +20182,7 @@ Bridge.Class.addExtend(System.String, [System.IComparable$1(System.String), Syst
     Enumerable.prototype.toList = function (T) {
         var array = [];
         this.forEach(function (x) { array.push(x); });
-        return new (System.Collections.Generic.List$1(T || System.Object))(array);
+        return new (System.Collections.Generic.List$1(T || System.Object).$ctor1)(array);
     };
 
     // Overload:function (keySelector)
@@ -19575,7 +20987,7 @@ Bridge.Class.addExtend(System.String, [System.IComparable$1(System.String), Syst
                 }
 
                 if (b.length !== 16) {
-                    throw new System.ArgumentException(System.String.format(System.Guid.error1, Bridge.box(16, System.Int32)));
+                    throw new System.ArgumentException(System.String.format(System.Guid.error1, [Bridge.box(16, System.Int32)]));
                 }
 
                 this._a = (b[System.Array.index(3, b)] << 24) | (b[System.Array.index(2, b)] << 16) | (b[System.Array.index(1, b)] << 8) | b[System.Array.index(0, b)];
@@ -19611,7 +21023,7 @@ Bridge.Class.addExtend(System.String, [System.IComparable$1(System.String), Syst
                 }
 
                 if (d.length !== 8) {
-                    throw new System.ArgumentException(System.String.format(System.Guid.error1, Bridge.box(8, System.Int32)));
+                    throw new System.ArgumentException(System.String.format(System.Guid.error1, [Bridge.box(8, System.Int32)]));
                 }
 
                 this._a = a;
@@ -19700,14 +21112,17 @@ Bridge.Class.addExtend(System.String, [System.IComparable$1(System.String), Syst
                 var r = null;
 
                 if (System.String.isNullOrEmpty(input)) {
-                    throw new System.ArgumentNullException("input");
+                    if (check) {
+                        throw new System.ArgumentNullException("input");
+                    }
+                    return false;
                 }
 
                 if (System.String.isNullOrEmpty(format)) {
                     var m = System.Guid.nonFormat.match(input);
 
                     if (m.getSuccess()) {
-                        var list = new (System.Collections.Generic.List$1(System.String))();
+                        var list = new (System.Collections.Generic.List$1(System.String)).ctor();
                         for (var i = 1; i <= m.getGroups().getCount(); i = (i + 1) | 0) {
                             if (m.getGroups().get(i).getSuccess()) {
                                 list.add(m.getGroups().get(i).getValue());
@@ -19725,7 +21140,7 @@ Bridge.Class.addExtend(System.String, [System.IComparable$1(System.String), Syst
                         var m1 = System.Guid.split.match(input);
 
                         if (m1.getSuccess()) {
-                            var list1 = new (System.Collections.Generic.List$1(System.String))();
+                            var list1 = new (System.Collections.Generic.List$1(System.String)).ctor();
                             for (var i1 = 1; i1 <= m1.getGroups().getCount(); i1 = (i1 + 1) | 0) {
                                 if (m1.getGroups().get(i1).getSuccess()) {
                                     list1.add(m1.getGroups().get(i1).getValue());
@@ -19763,11 +21178,11 @@ Bridge.Class.addExtend(System.String, [System.IComparable$1(System.String), Syst
                 return false;
             },
             format$1: function (format) {
-                var s = System.String.concat(System.UInt32.format((this._a >>> 0), "x8"), System.UInt16.format((this._b & 65535), "x4"), System.UInt16.format((this._c & 65535), "x4"));
-                s = System.String.concat(s, (System.Array.init([this._d, this._e, this._f, this._g, this._h, this._i, this._j, this._k], System.Byte)).map(System.Guid.makeBinary).join(""));
+                var s = (System.UInt32.format((this._a >>> 0), "x8") || "") + (System.UInt16.format((this._b & 65535), "x4") || "") + (System.UInt16.format((this._c & 65535), "x4") || "");
+                s = (s || "") + ((System.Array.init([this._d, this._e, this._f, this._g, this._h, this._i, this._j, this._k], System.Byte)).map(System.Guid.makeBinary).join("") || "");
 
                 var m = System.Guid.split.match(s);
-                var list = new (System.Collections.Generic.List$1(System.String))();
+                var list = new (System.Collections.Generic.List$1(System.String)).ctor();
                 for (var i = 1; i <= m.getGroups().getCount(); i = (i + 1) | 0) {
                     if (m.getGroups().get(i).getSuccess()) {
                         list.add(m.getGroups().get(i).getValue());
@@ -19781,10 +21196,10 @@ Bridge.Class.addExtend(System.String, [System.IComparable$1(System.String), Syst
                         return System.Guid.replace.replace(s, "");
                     case "b": 
                     case "B": 
-                        return System.String.concat(String.fromCharCode(123), s, String.fromCharCode(125));
+                        return String.fromCharCode(123) + (s || "") + String.fromCharCode(125);
                     case "p": 
                     case "P": 
-                        return System.String.concat(String.fromCharCode(40), s, String.fromCharCode(41));
+                        return String.fromCharCode(40) + (s || "") + String.fromCharCode(41);
                     default: 
                         return s;
                 }
@@ -19813,6 +21228,9 @@ Bridge.Class.addExtend(System.String, [System.IComparable$1(System.String), Syst
                 this._i = r[System.Array.index(5, r)];
                 this._j = r[System.Array.index(6, r)];
                 this._k = r[System.Array.index(7, r)];
+            },
+            toJSON: function () {
+                return this.toString();
             },
             $clone: function (to) { return this; }
         }
@@ -19936,7 +21354,7 @@ Bridge.Class.addExtend(System.String, [System.IComparable$1(System.String), Syst
                     try {
                         while ($t.moveNext()) {
                             var pair = $t.Current;
-                            name = System.String.replaceAll(name, System.String.concat("%", pair.key, "%"), pair.value);
+                            name = System.String.replaceAll(name, "%" + (pair.key || "") + "%", pair.value);
                         }
                     } finally {
                         if (Bridge.is($t, System.IDisposable)) {
@@ -19955,7 +21373,7 @@ Bridge.Class.addExtend(System.String, [System.IComparable$1(System.String), Syst
                     var l = System.Environment.Location;
 
                     if (l) {
-                        var args = new (System.Collections.Generic.List$1(System.String))();
+                        var args = new (System.Collections.Generic.List$1(System.String)).ctor();
 
                         var path = l.pathname;
 
@@ -20172,7 +21590,7 @@ Bridge.Class.addExtend(System.String, [System.IComparable$1(System.String), Syst
             if (!Bridge.isDefined(useCache)) {
                 useCache = false;
             }
-            
+
             var scope = System.Text.RegularExpressions;
 
             if (pattern == null) {
@@ -20501,7 +21919,7 @@ Bridge.Class.addExtend(System.String, [System.IComparable$1(System.String), Syst
                     get: function() {
                         return this._capcount;
                     }
-                }    
+                }
             },
 
             alias: [
@@ -21464,7 +22882,7 @@ Bridge.Class.addExtend(System.String, [System.IComparable$1(System.String), Syst
 Bridge.define("System.Text.RegularExpressions.RegexParser", {
     statics: {
         _Q: 5, // quantifier
-        _S: 4, // ordinary stoppper
+        _S: 4, // ordinary stopper
         _Z: 3, // ScanBlank stopper
         _X: 2, // whitespace
         _E: 1, // should be escaped
@@ -25841,6 +27259,5662 @@ Bridge.define("System.Text.RegularExpressions.RegexParser", {
         }
     });
 
+    // @source encoding.js
+
+    Bridge.define("System.Text.Encoding", {
+        statics: {
+            fields: {
+                _encodings: null
+            },
+            props: {
+                Default: null,
+                Unicode: null,
+                ASCII: null,
+                BigEndianUnicode: null,
+                UTF7: null,
+                UTF8: null,
+                UTF32: null
+            },
+            ctors: {
+                init: function () {
+                    this.Default = new System.Text.UnicodeEncoding.$ctor1(false, true);
+                    this.Unicode = new System.Text.UnicodeEncoding.$ctor1(false, true);
+                    this.ASCII = new System.Text.ASCIIEncoding();
+                    this.BigEndianUnicode = new System.Text.UnicodeEncoding.$ctor1(true, true);
+                    this.UTF7 = new System.Text.UTF7Encoding.ctor();
+                    this.UTF8 = new System.Text.UTF8Encoding.ctor();
+                    this.UTF32 = new System.Text.UTF32Encoding.$ctor1(false, true);
+                }
+            },
+            methods: {
+                Convert: function (srcEncoding, dstEncoding, bytes) {
+                    return System.Text.Encoding.Convert$1(srcEncoding, dstEncoding, bytes, 0, bytes.length);
+                },
+                Convert$1: function (srcEncoding, dstEncoding, bytes, index, count) {
+                    if (srcEncoding == null || dstEncoding == null) {
+                        throw new System.ArgumentNullException(srcEncoding == null ? "srcEncoding" : "dstEncoding");
+                    }
+
+                    if (bytes == null) {
+                        throw new System.ArgumentNullException("bytes");
+                    }
+
+                    return dstEncoding.GetBytes(srcEncoding.GetChars$1(bytes, index, count));
+                },
+                GetEncoding: function (codepage) {
+                    switch (codepage) {
+                        case 1200: 
+                            return System.Text.Encoding.Unicode;
+                        case 20127: 
+                            return System.Text.Encoding.ASCII;
+                        case 1201: 
+                            return System.Text.Encoding.BigEndianUnicode;
+                        case 65000: 
+                            return System.Text.Encoding.UTF7;
+                        case 65001: 
+                            return System.Text.Encoding.UTF8;
+                        case 12000: 
+                            return System.Text.Encoding.UTF32;
+                    }
+                    throw new System.NotSupportedException();
+                },
+                GetEncoding$1: function (codepage) {
+                    switch (codepage) {
+                        case "utf-16": 
+                            return System.Text.Encoding.Unicode;
+                        case "us-ascii": 
+                            return System.Text.Encoding.ASCII;
+                        case "utf-16BE": 
+                            return System.Text.Encoding.BigEndianUnicode;
+                        case "utf-7": 
+                            return System.Text.Encoding.UTF7;
+                        case "utf-8": 
+                            return System.Text.Encoding.UTF8;
+                        case "utf-32": 
+                            return System.Text.Encoding.UTF32;
+                    }
+                    throw new System.NotSupportedException();
+                },
+                GetEncodings: function () {
+                    if (System.Text.Encoding._encodings != null) {
+                        return System.Text.Encoding._encodings;
+                    }
+                    System.Text.Encoding._encodings = System.Array.init(6, null, System.Text.EncodingInfo);
+                    var result = System.Text.Encoding._encodings;
+
+                    result[System.Array.index(0, result)] = new System.Text.EncodingInfo(20127, "us-ascii", "US-ASCII");
+                    result[System.Array.index(1, result)] = new System.Text.EncodingInfo(1200, "utf-16", "Unicode");
+                    result[System.Array.index(2, result)] = new System.Text.EncodingInfo(1201, "utf-16BE", "Unicode (Big-Endian)");
+                    result[System.Array.index(3, result)] = new System.Text.EncodingInfo(65000, "utf-7", "Unicode (UTF-7)");
+                    result[System.Array.index(4, result)] = new System.Text.EncodingInfo(65001, "utf-8", "Unicode (UTF-8)");
+                    result[System.Array.index(5, result)] = new System.Text.EncodingInfo(1200, "utf-32", "Unicode (UTF-32)");
+                    return result;
+                }
+            }
+        },
+        fields: {
+            _hasError: false,
+            fallbackCharacter: 0
+        },
+        props: {
+            CodePage: {
+                get: function () {
+                    return 0;
+                }
+            },
+            EncodingName: {
+                get: function () {
+                    return null;
+                }
+            }
+        },
+        ctors: {
+            init: function () {
+                this.fallbackCharacter = 63;
+            }
+        },
+        methods: {
+            Encode$1: function (chars, index, count) {
+                var writtenCount = { };
+                return this.Encode$3(System.String.fromCharArray(chars, index, count), null, 0, writtenCount);
+            },
+            Encode$5: function (s, index, count, outputBytes, outputIndex) {
+                var writtenBytes = { };
+                this.Encode$3(s.substr(index, count), outputBytes, outputIndex, writtenBytes);
+                return writtenBytes.v;
+            },
+            Encode$4: function (chars, index, count, outputBytes, outputIndex) {
+                var writtenBytes = { };
+                this.Encode$3(System.String.fromCharArray(chars, index, count), outputBytes, outputIndex, writtenBytes);
+                return writtenBytes.v;
+            },
+            Encode: function (chars) {
+                var count = { };
+                return this.Encode$3(System.String.fromCharArray(chars), null, 0, count);
+            },
+            Encode$2: function (str) {
+                var count = { };
+                return this.Encode$3(str, null, 0, count);
+            },
+            Decode$1: function (bytes, index, count) {
+                return this.Decode$2(bytes, index, count, null, 0);
+            },
+            Decode: function (bytes) {
+                return this.Decode$2(bytes, 0, bytes.length, null, 0);
+            },
+            GetByteCount: function (chars) {
+                return this.GetByteCount$1(chars, 0, chars.length);
+            },
+            GetByteCount$2: function (s) {
+                return this.Encode$2(s).length;
+            },
+            GetByteCount$1: function (chars, index, count) {
+                return this.Encode$1(chars, index, count).length;
+            },
+            GetBytes: function (chars) {
+                return this.GetBytes$1(chars, 0, chars.length);
+            },
+            GetBytes$1: function (chars, index, count) {
+                return this.Encode$2(System.String.fromCharArray(chars, index, count));
+            },
+            GetBytes$3: function (chars, charIndex, charCount, bytes, byteIndex) {
+                return this.Encode$4(chars, charIndex, charCount, bytes, byteIndex);
+            },
+            GetBytes$2: function (s) {
+                return this.Encode$2(s);
+            },
+            GetBytes$4: function (s, charIndex, charCount, bytes, byteIndex) {
+                return this.Encode$5(s, charIndex, charCount, bytes, byteIndex);
+            },
+            GetCharCount: function (bytes) {
+                return this.Decode(bytes).length;
+            },
+            GetCharCount$1: function (bytes, index, count) {
+                return this.Decode$1(bytes, index, count).length;
+            },
+            GetChars: function (bytes) {
+                var $t;
+                return ($t = this.Decode(bytes), System.String.toCharArray($t, 0, $t.length));
+            },
+            GetChars$1: function (bytes, index, count) {
+                var $t;
+                return ($t = this.Decode$1(bytes, index, count), System.String.toCharArray($t, 0, $t.length));
+            },
+            GetChars$2: function (bytes, byteIndex, byteCount, chars, charIndex) {
+                var s = this.Decode$1(bytes, byteIndex, byteCount);
+                var arr = System.String.toCharArray(s, 0, s.length);
+
+                if (chars.length < (((arr.length + charIndex) | 0))) {
+                    throw new System.ArgumentException(null, "chars");
+                }
+
+                for (var i = 0; i < arr.length; i = (i + 1) | 0) {
+                    chars[System.Array.index(((charIndex + i) | 0), chars)] = arr[System.Array.index(i, arr)];
+                }
+
+                return arr.length;
+            },
+            GetString: function (bytes) {
+                return this.Decode(bytes);
+            },
+            GetString$1: function (bytes, index, count) {
+                return this.Decode$1(bytes, index, count);
+            }
+        }
+    });
+
+    Bridge.define("System.Text.EncodingInfo", {
+        props: {
+            CodePage: 0,
+            Name: null,
+            DisplayName: null
+        },
+        ctors: {
+            ctor: function (codePage, name, displayName) {
+                var $t;
+                this.$initialize();
+                this.CodePage = codePage;
+                this.Name = name;
+                this.DisplayName = ($t = displayName, $t != null ? $t : name);
+            }
+        },
+        methods: {
+            GetEncoding: function () {
+                return System.Text.Encoding.GetEncoding(this.CodePage);
+            },
+            GetHashCode: function () {
+                return this.CodePage;
+            },
+            Equals: function (o) {
+                var that = Bridge.as(o, System.Text.EncodingInfo);
+                return System.Nullable.eq(this.CodePage, (that != null ? that.CodePage : null));
+            }
+        }
+    });
+
+    Bridge.define("System.Text.ASCIIEncoding", {
+        inherits: [System.Text.Encoding],
+        props: {
+            CodePage: {
+                get: function () {
+                    return 20127;
+                }
+            },
+            EncodingName: {
+                get: function () {
+                    return "US-ASCII";
+                }
+            }
+        },
+        methods: {
+            Encode$3: function (s, outputBytes, outputIndex, writtenBytes) {
+                var hasBuffer = outputBytes != null;
+
+                if (!hasBuffer) {
+                    outputBytes = System.Array.init(0, 0, System.Byte);
+                }
+
+                var recorded = 0;
+                for (var i = 0; i < s.length; i = (i + 1) | 0) {
+                    var ch = s.charCodeAt(i);
+                    var byteCode = (ch <= 127 ? ch : this.fallbackCharacter) & 255;
+
+                    if (hasBuffer) {
+                        if ((((i + outputIndex) | 0)) >= outputBytes.length) {
+                            throw new System.ArgumentException("bytes");
+                        }
+                        outputBytes[System.Array.index(((i + outputIndex) | 0), outputBytes)] = byteCode;
+                    } else {
+                        outputBytes.push(byteCode);
+                    }
+                    recorded = (recorded + 1) | 0;
+                }
+
+                writtenBytes.v = recorded;
+
+                if (hasBuffer) {
+                    return null;
+                }
+
+                return outputBytes;
+            },
+            Decode$2: function (bytes, index, count, chars, charIndex) {
+                var position = index;
+                var result = "";
+                var endpoint = (position + count) | 0;
+
+                for (; position < endpoint; position = (position + 1) | 0) {
+                    var byteCode = bytes[System.Array.index(position, bytes)];
+
+                    if (byteCode > 127) {
+                        result = (result || "") + String.fromCharCode(this.fallbackCharacter);
+                    } else {
+                        result = (result || "") + ((String.fromCharCode(byteCode)) || "");
+                    }
+                }
+
+                return result;
+            },
+            GetMaxByteCount: function (charCount) {
+                if (charCount < 0) {
+                    throw new System.ArgumentOutOfRangeException("charCount");
+                }
+
+                var byteCount = System.Int64(charCount).add(System.Int64(1));
+
+                if (byteCount.gt(System.Int64(2147483647))) {
+                    throw new System.ArgumentOutOfRangeException("charCount");
+                }
+
+                return System.Int64.clip32(byteCount);
+            },
+            GetMaxCharCount: function (byteCount) {
+                if (byteCount < 0) {
+                    throw new System.ArgumentOutOfRangeException("byteCount");
+                }
+
+                var charCount = System.Int64(byteCount);
+
+                if (charCount.gt(System.Int64(2147483647))) {
+                    throw new System.ArgumentOutOfRangeException("byteCount");
+                }
+
+                return System.Int64.clip32(charCount);
+            }
+        }
+    });
+
+    Bridge.define("System.Text.UnicodeEncoding", {
+        inherits: [System.Text.Encoding],
+        fields: {
+            bigEndian: false,
+            byteOrderMark: false,
+            throwOnInvalid: false
+        },
+        props: {
+            CodePage: {
+                get: function () {
+                    return this.bigEndian ? 1201 : 1200;
+                }
+            },
+            EncodingName: {
+                get: function () {
+                    return this.bigEndian ? "Unicode (Big-Endian)" : "Unicode";
+                }
+            }
+        },
+        ctors: {
+            ctor: function () {
+                System.Text.UnicodeEncoding.$ctor1.call(this, false, true);
+            },
+            $ctor1: function (bigEndian, byteOrderMark) {
+                System.Text.UnicodeEncoding.$ctor2.call(this, bigEndian, byteOrderMark, false);
+            },
+            $ctor2: function (bigEndian, byteOrderMark, throwOnInvalidBytes) {
+                this.$initialize();
+                System.Text.Encoding.ctor.call(this);
+                this.bigEndian = bigEndian;
+                this.byteOrderMark = byteOrderMark;
+                this.throwOnInvalid = throwOnInvalidBytes;
+                this.fallbackCharacter = 65533;
+            }
+        },
+        methods: {
+            Encode$3: function (s, outputBytes, outputIndex, writtenBytes) {
+                var hasBuffer = outputBytes != null;
+                var recorded = 0;
+                var surrogate_1st = 0;
+                var fallbackCharacterCode = this.fallbackCharacter;
+
+                var write = function (ch) {
+                    if (hasBuffer) {
+                        if (outputIndex >= outputBytes.length) {
+                            throw new System.ArgumentException("bytes");
+                        }
+
+                        outputBytes[System.Array.index(Bridge.identity(outputIndex, (outputIndex = (outputIndex + 1) | 0)), outputBytes)] = ch;
+                    } else {
+                        outputBytes.push(ch);
+                    }
+                    recorded = (recorded + 1) | 0;
+                };
+
+                var writePair = function (a, b) {
+                    write(a);
+                    write(b);
+                };
+
+                var swap = $asm.$.System.Text.UnicodeEncoding.f1;
+
+                var fallback = Bridge.fn.bind(this, function () {
+                    if (this.throwOnInvalid) {
+                        throw new System.Exception("Invalid character in UTF16 text");
+                    }
+
+                    writePair((fallbackCharacterCode & 255), ((fallbackCharacterCode >> 8) & 255));
+                });
+
+                if (!hasBuffer) {
+                    outputBytes = System.Array.init(0, 0, System.Byte);
+                }
+
+                if (this.bigEndian) {
+                    fallbackCharacterCode = swap(fallbackCharacterCode);
+                }
+
+                for (var i = 0; i < s.length; i = (i + 1) | 0) {
+                    var ch = s.charCodeAt(i);
+
+                    if (surrogate_1st !== 0) {
+                        if (ch >= 56320 && ch <= 57343) {
+                            if (this.bigEndian) {
+                                surrogate_1st = swap(surrogate_1st);
+                                ch = swap(ch);
+                            }
+                            writePair((surrogate_1st & 255), ((surrogate_1st >> 8) & 255));
+                            writePair((ch & 255), ((ch >> 8) & 255));
+                            surrogate_1st = 0;
+                            continue;
+                        }
+                        fallback();
+                        surrogate_1st = 0;
+                    }
+
+                    if (55296 <= ch && ch <= 56319) {
+                        surrogate_1st = ch;
+                        continue;
+                    } else if (56320 <= ch && ch <= 57343) {
+                        fallback();
+                        surrogate_1st = 0;
+                        continue;
+                    }
+
+                    if (ch < 65536) {
+                        if (this.bigEndian) {
+                            ch = swap(ch);
+                        }
+                        writePair((ch & 255), ((ch >> 8) & 255));
+                    } else if (ch <= 1114111) {
+                        ch = ch - 0x10000; //?????
+
+                        var lowBits = ((ch & 1023) | 56320) & 65535;
+                        var highBits = (((ch >> 10) & 1023) | 55296) & 65535;
+
+                        if (this.bigEndian) {
+                            highBits = swap(highBits);
+                            lowBits = swap(lowBits);
+                        }
+                        writePair((highBits & 255), ((highBits >> 8) & 255));
+                        writePair((lowBits & 255), ((lowBits >> 8) & 255));
+                    } else {
+                        fallback();
+                    }
+                }
+
+                if (surrogate_1st !== 0) {
+                    fallback();
+                }
+
+                writtenBytes.v = recorded;
+
+                if (hasBuffer) {
+                    return null;
+                }
+
+                return outputBytes;
+            },
+            Decode$2: function (bytes, index, count, chars, charIndex) {
+                var position = index;
+                var result = "";
+                var endpoint = (position + count) | 0;
+                this._hasError = false;
+
+                var fallback = Bridge.fn.bind(this, function () {
+                    if (this.throwOnInvalid) {
+                        throw new System.Exception("Invalid character in UTF16 text");
+                    }
+
+                    result = (result || "") + String.fromCharCode(this.fallbackCharacter);
+                });
+
+                var swap = $asm.$.System.Text.UnicodeEncoding.f2;
+
+                var readPair = Bridge.fn.bind(this, function () {
+                    if ((((position + 2) | 0)) > endpoint) {
+                        position = (position + 2) | 0;
+                        return null;
+                    }
+
+                    var a = bytes[System.Array.index(Bridge.identity(position, (position = (position + 1) | 0)), bytes)];
+                    var b = bytes[System.Array.index(Bridge.identity(position, (position = (position + 1) | 0)), bytes)];
+
+                    var point = ((a << 8) | b) & 65535;
+                    if (!this.bigEndian) {
+                        point = swap(point);
+                    }
+
+                    return point;
+                });
+
+                while (position < endpoint) {
+                    var firstWord = readPair();
+
+                    if (!System.Nullable.hasValue(firstWord)) {
+                        fallback();
+                        this._hasError = true;
+                    } else if ((System.Nullable.lt(firstWord, 55296)) || (System.Nullable.gt(firstWord, 57343))) {
+                        result = (result || "") + ((System.String.fromCharCode(System.Nullable.getValue(firstWord))) || "");
+                    } else if ((System.Nullable.gte(firstWord, 55296)) && (System.Nullable.lte(firstWord, 56319))) {
+                        var end = position >= endpoint;
+                        var secondWord = readPair();
+                        if (end) {
+                            fallback();
+                            this._hasError = true;
+                        } else if (!System.Nullable.hasValue(secondWord)) {
+                            fallback();
+                            fallback();
+                        } else if ((System.Nullable.gte(secondWord, 56320)) && (System.Nullable.lte(secondWord, 57343))) {
+                            var highBits = System.Nullable.band(firstWord, 1023);
+                            var lowBits = System.Nullable.band(secondWord, 1023);
+
+                            var charCode = Bridge.Int.clip32(System.Nullable.add((System.Nullable.bor((System.Nullable.sl(highBits, 10)), lowBits)), 65536));
+
+                            result = (result || "") + ((System.String.fromCharCode(System.Nullable.getValue(charCode))) || "");
+                        } else {
+                            fallback();
+                            position = (position - 2) | 0;
+                        }
+                    } else {
+                        fallback();
+                    }
+                }
+
+                return result;
+            },
+            GetMaxByteCount: function (charCount) {
+                if (charCount < 0) {
+                    throw new System.ArgumentOutOfRangeException("charCount");
+                }
+
+                var byteCount = System.Int64(charCount).add(System.Int64(1));
+                byteCount = byteCount.shl(1);
+
+                if (byteCount.gt(System.Int64(2147483647))) {
+                    throw new System.ArgumentOutOfRangeException("charCount");
+                }
+
+                return System.Int64.clip32(byteCount);
+            },
+            GetMaxCharCount: function (byteCount) {
+                if (byteCount < 0) {
+                    throw new System.ArgumentOutOfRangeException("byteCount");
+                }
+
+                var charCount = System.Int64((byteCount >> 1)).add(System.Int64((byteCount & 1))).add(System.Int64(1));
+
+                if (charCount.gt(System.Int64(2147483647))) {
+                    throw new System.ArgumentOutOfRangeException("byteCount");
+                }
+
+                return System.Int64.clip32(charCount);
+            }
+        }
+    });
+
+    Bridge.ns("System.Text.UnicodeEncoding", $asm.$);
+
+    Bridge.apply($asm.$.System.Text.UnicodeEncoding, {
+        f1: function (ch) {
+            return ((((ch & 255) << 8) | ((ch >> 8) & 255)) & 65535);
+        },
+        f2: function (ch) {
+            return ((((ch & 255) << 8) | (((ch >> 8)) & 255)) & 65535);
+        }
+    });
+
+    Bridge.define("System.Text.UTF32Encoding", {
+        inherits: [System.Text.Encoding],
+        fields: {
+            bigEndian: false,
+            byteOrderMark: false,
+            throwOnInvalid: false
+        },
+        props: {
+            CodePage: {
+                get: function () {
+                    return this.bigEndian ? 1201 : 1200;
+                }
+            },
+            EncodingName: {
+                get: function () {
+                    return this.bigEndian ? "Unicode (UTF-32 Big-Endian)" : "Unicode (UTF-32)";
+                }
+            }
+        },
+        ctors: {
+            ctor: function () {
+                System.Text.UTF32Encoding.$ctor2.call(this, false, true, false);
+            },
+            $ctor1: function (bigEndian, byteOrderMark) {
+                System.Text.UTF32Encoding.$ctor2.call(this, bigEndian, byteOrderMark, false);
+            },
+            $ctor2: function (bigEndian, byteOrderMark, throwOnInvalidBytes) {
+                this.$initialize();
+                System.Text.Encoding.ctor.call(this);
+                this.bigEndian = bigEndian;
+                this.byteOrderMark = byteOrderMark;
+                this.throwOnInvalid = throwOnInvalidBytes;
+                this.fallbackCharacter = 65533;
+            }
+        },
+        methods: {
+            ToCodePoints: function (str) {
+                var surrogate_1st = 0;
+                var unicode_codes = System.Array.init(0, 0, System.Char);
+                var fallback = Bridge.fn.bind(this, function () {
+                    if (this.throwOnInvalid) {
+                        throw new System.Exception("Invalid character in UTF32 text");
+                    }
+                    unicode_codes.push(this.fallbackCharacter);
+                });
+
+                for (var i = 0; i < str.length; i = (i + 1) | 0) {
+                    var utf16_code = str.charCodeAt(i);
+
+                    if (surrogate_1st !== 0) {
+                        if (utf16_code >= 56320 && utf16_code <= 57343) {
+                            var surrogate_2nd = utf16_code;
+                            var unicode_code = (((Bridge.Int.mul((((surrogate_1st - 55296) | 0)), (1024)) + (65536)) | 0) + (((surrogate_2nd - 56320) | 0))) | 0;
+                            unicode_codes.push(unicode_code);
+                        } else {
+                            fallback();
+                            i = (i - 1) | 0;
+                        }
+                        surrogate_1st = 0;
+                    } else if (utf16_code >= 55296 && utf16_code <= 56319) {
+                        surrogate_1st = utf16_code;
+                    } else if ((utf16_code >= 56320) && (utf16_code <= 57343)) {
+                        fallback();
+                    } else {
+                        unicode_codes.push(utf16_code);
+                    }
+                }
+
+                if (surrogate_1st !== 0) {
+                    fallback();
+                }
+
+                return unicode_codes;
+            },
+            Encode$3: function (s, outputBytes, outputIndex, writtenBytes) {
+                var hasBuffer = outputBytes != null;
+                var recorded = 0;
+
+                var write = function (ch) {
+                    if (hasBuffer) {
+                        if (outputIndex >= outputBytes.length) {
+                            throw new System.ArgumentException("bytes");
+                        }
+
+                        outputBytes[System.Array.index(Bridge.identity(outputIndex, (outputIndex = (outputIndex + 1) | 0)), outputBytes)] = ch;
+                    } else {
+                        outputBytes.push(ch);
+                    }
+                    recorded = (recorded + 1) | 0;
+                };
+
+                var write32 = Bridge.fn.bind(this, function (a) {
+                    var r = System.Array.init(4, 0, System.Byte);
+                    r[System.Array.index(0, r)] = (((a & 255) >>> 0));
+                    r[System.Array.index(1, r)] = ((((a & 65280) >>> 0)) >>> 8);
+                    r[System.Array.index(2, r)] = ((((a & 16711680) >>> 0)) >>> 16);
+                    r[System.Array.index(3, r)] = ((((a & 4278190080) >>> 0)) >>> 24);
+
+                    if (this.bigEndian) {
+                        r.reverse();
+                    }
+
+                    write(r[System.Array.index(0, r)]);
+                    write(r[System.Array.index(1, r)]);
+                    write(r[System.Array.index(2, r)]);
+                    write(r[System.Array.index(3, r)]);
+                });
+
+                if (!hasBuffer) {
+                    outputBytes = System.Array.init(0, 0, System.Byte);
+                }
+
+                var unicode_codes = this.ToCodePoints(s);
+                for (var i = 0; i < unicode_codes.length; i = (i + 1) | 0) {
+                    write32(unicode_codes[System.Array.index(i, unicode_codes)]);
+                }
+
+                writtenBytes.v = recorded;
+
+                if (hasBuffer) {
+                    return null;
+                }
+
+                return outputBytes;
+            },
+            Decode$2: function (bytes, index, count, chars, charIndex) {
+                var position = index;
+                var result = "";
+                var endpoint = (position + count) | 0;
+                this._hasError = false;
+
+                var fallback = Bridge.fn.bind(this, function () {
+                    if (this.throwOnInvalid) {
+                        throw new System.Exception("Invalid character in UTF32 text");
+                    }
+
+                    result = (result || "") + ((String.fromCharCode(this.fallbackCharacter)) || "");
+                });
+
+                var read32 = Bridge.fn.bind(this, function () {
+                    if ((((position + 4) | 0)) > endpoint) {
+                        position = (position + 4) | 0;
+                        return null;
+                    }
+
+                    var a = bytes[System.Array.index(Bridge.identity(position, (position = (position + 1) | 0)), bytes)];
+                    var b = bytes[System.Array.index(Bridge.identity(position, (position = (position + 1) | 0)), bytes)];
+                    var c = bytes[System.Array.index(Bridge.identity(position, (position = (position + 1) | 0)), bytes)];
+                    var d = bytes[System.Array.index(Bridge.identity(position, (position = (position + 1) | 0)), bytes)];
+
+                    if (this.bigEndian) {
+                        var tmp = b;
+                        b = c;
+                        c = tmp;
+
+                        tmp = a;
+                        a = d;
+                        d = tmp;
+                    }
+
+                    return ((d << 24) | (c << 16) | (b << 8) | a);
+                });
+
+                while (position < endpoint) {
+                    var unicode_code = read32();
+
+                    if (unicode_code == null) {
+                        fallback();
+                        this._hasError = true;
+                        continue;
+                    }
+
+                    if (System.Nullable.lt(unicode_code, 65536) || System.Nullable.gt(unicode_code, 1114111)) {
+                        if (System.Nullable.lt(unicode_code, 0) || System.Nullable.gt(unicode_code, 1114111) || (System.Nullable.gte(unicode_code, 55296) && System.Nullable.lte(unicode_code, 57343))) {
+                            fallback();
+                        } else {
+                            result = (result || "") + ((String.fromCharCode(unicode_code)) || "");
+                        }
+                    } else {
+                        result = (result || "") + ((String.fromCharCode((Bridge.Int.clipu32(System.Nullable.add((Bridge.Int.clipu32(Bridge.Int.div((Bridge.Int.clipu32(System.Nullable.sub(unicode_code, (65536)))), (1024)))), 55296))))) || "");
+                        result = (result || "") + ((String.fromCharCode((Bridge.Int.clipu32(System.Nullable.add((System.Nullable.mod(unicode_code, (1024))), 56320))))) || "");
+                    }
+                }
+
+                return result;
+            },
+            GetMaxByteCount: function (charCount) {
+                if (charCount < 0) {
+                    throw new System.ArgumentOutOfRangeException("charCount");
+                }
+
+                var byteCount = System.Int64(charCount).add(System.Int64(1));
+                byteCount = byteCount.mul(System.Int64(4));
+
+                if (byteCount.gt(System.Int64(2147483647))) {
+                    throw new System.ArgumentOutOfRangeException("charCount");
+                }
+
+                return System.Int64.clip32(byteCount);
+            },
+            GetMaxCharCount: function (byteCount) {
+                if (byteCount < 0) {
+                    throw new System.ArgumentOutOfRangeException("byteCount");
+                }
+
+                var charCount = (((Bridge.Int.div(byteCount, 2)) | 0) + 2) | 0;
+
+                if (charCount > 2147483647) {
+                    throw new System.ArgumentOutOfRangeException("byteCount");
+                }
+
+                return charCount;
+            }
+        }
+    });
+
+    Bridge.define("System.Text.UTF7Encoding", {
+        inherits: [System.Text.Encoding],
+        statics: {
+            methods: {
+                Escape: function (chars) {
+                    return chars.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, '\\$&');
+                }
+            }
+        },
+        fields: {
+            allowOptionals: false
+        },
+        props: {
+            CodePage: {
+                get: function () {
+                    return 65000;
+                }
+            },
+            EncodingName: {
+                get: function () {
+                    return "Unicode (UTF-7)";
+                }
+            }
+        },
+        ctors: {
+            ctor: function () {
+                System.Text.UTF7Encoding.$ctor1.call(this, false);
+            },
+            $ctor1: function (allowOptionals) {
+                this.$initialize();
+                System.Text.Encoding.ctor.call(this);
+                this.allowOptionals = allowOptionals;
+                this.fallbackCharacter = 65533;
+            }
+        },
+        methods: {
+            Encode$3: function (s, outputBytes, outputIndex, writtenBytes) {
+                var setD = "A-Za-z0-9" + (System.Text.UTF7Encoding.Escape("'(),-./:?") || "");
+
+                var encode = $asm.$.System.Text.UTF7Encoding.f1;
+
+                var setO = System.Text.UTF7Encoding.Escape("!\"#$%&*;<=>@[]^_`{|}");
+                var setW = System.Text.UTF7Encoding.Escape(" \r\n\t");
+
+                s = s.replace(new RegExp("[^" + setW + setD + (this.allowOptionals ? setO : "") + "]+", 'g'), function(chunk) {return '+' + (chunk === '+' ? '' : encode(chunk)) + '-';});
+
+                var arr = System.String.toCharArray(s, 0, s.length);
+
+                if (outputBytes != null) {
+                    var recorded = 0;
+
+                    if (arr.length > (((outputBytes.length - outputIndex) | 0))) {
+                        throw new System.ArgumentException("bytes");
+                    }
+
+                    for (var j = 0; j < arr.length; j = (j + 1) | 0) {
+                        outputBytes[System.Array.index(((j + outputIndex) | 0), outputBytes)] = arr[System.Array.index(j, arr)];
+                        recorded = (recorded + 1) | 0;
+                    }
+
+                    writtenBytes.v = recorded;
+                    return null;
+                }
+
+                writtenBytes.v = arr.length;
+
+                return arr;
+            },
+            Decode$2: function (bytes, index, count, chars, charIndex) {
+                var _base64ToArrayBuffer = $asm.$.System.Text.UTF7Encoding.f2;
+
+                var decode = function (s) {
+                    var b = _base64ToArrayBuffer(s);
+                    var r = System.Array.init(0, 0, System.Char);
+                    for (var i = 0; i < b.length; ) {
+                        r.push(((b[System.Array.index(Bridge.identity(i, (i = (i + 1) | 0)), b)] << 8 | b[System.Array.index(Bridge.identity(i, (i = (i + 1) | 0)), b)]) & 65535));
+                    }
+                    return System.String.fromCharArray(r);
+                };
+
+                var str = System.String.fromCharArray(bytes, index, count);
+                return str.replace(/\+([A-Za-z0-9\/]*)-?/gi, function (_, chunk) {if (chunk === '') {return _ == '+-' ? '+' : '';}return decode(chunk);});
+            },
+            GetMaxByteCount: function (charCount) {
+                if (charCount < 0) {
+                    throw new System.ArgumentOutOfRangeException("charCount");
+                }
+
+                var byteCount = System.Int64(charCount).mul(System.Int64(3)).add(System.Int64(2));
+
+                if (byteCount.gt(System.Int64(2147483647))) {
+                    throw new System.ArgumentOutOfRangeException("charCount");
+                }
+
+                return System.Int64.clip32(byteCount);
+            },
+            GetMaxCharCount: function (byteCount) {
+                if (byteCount < 0) {
+                    throw new System.ArgumentOutOfRangeException("byteCount");
+                }
+
+                var charCount = byteCount;
+                if (charCount === 0) {
+                    charCount = 1;
+                }
+
+                return charCount | 0;
+            }
+        }
+    });
+
+    Bridge.ns("System.Text.UTF7Encoding", $asm.$);
+
+    Bridge.apply($asm.$.System.Text.UTF7Encoding, {
+        f1: function (str) {
+            var b = System.Array.init(Bridge.Int.mul(str.length, 2), 0, System.Byte);
+            var bi = 0;
+            for (var i = 0; i < str.length; i = (i + 1) | 0) {
+                var c = str.charCodeAt(i);
+                b[System.Array.index(Bridge.identity(bi, (bi = (bi + 1) | 0)), b)] = (c >> 8);
+                b[System.Array.index(Bridge.identity(bi, (bi = (bi + 1) | 0)), b)] = (c & 255);
+            }
+            var base64Str = System.Convert.toBase64String(b, null, null, null);
+            return base64Str.replace(/=+$/, '');
+        },
+        f2: function (base64) {
+            try {
+                var binary_string = window.atob(base64);
+                var len = binary_string.length;
+                var arr = System.Array.init(len, 0, System.Char);
+
+                if (len === 1 && binary_string.charCodeAt(0) === 0) {
+                    return System.Array.init(0, 0, System.Char);
+                }
+
+                for (var i = 0; i < len; i = (i + 1) | 0) {
+                    arr[System.Array.index(i, arr)] = binary_string.charCodeAt(i);
+                }
+                return arr;
+            }
+            catch ($e1) {
+                $e1 = System.Exception.create($e1);
+                return System.Array.init(0, 0, System.Char);
+            }
+        }
+    });
+
+    Bridge.define("System.Text.UTF8Encoding", {
+        inherits: [System.Text.Encoding],
+        fields: {
+            encoderShouldEmitUTF8Identifier: false,
+            throwOnInvalid: false
+        },
+        props: {
+            CodePage: {
+                get: function () {
+                    return 65001;
+                }
+            },
+            EncodingName: {
+                get: function () {
+                    return "Unicode (UTF-8)";
+                }
+            }
+        },
+        ctors: {
+            ctor: function () {
+                System.Text.UTF8Encoding.$ctor1.call(this, false);
+            },
+            $ctor1: function (encoderShouldEmitUTF8Identifier) {
+                System.Text.UTF8Encoding.$ctor2.call(this, encoderShouldEmitUTF8Identifier, false);
+            },
+            $ctor2: function (encoderShouldEmitUTF8Identifier, throwOnInvalidBytes) {
+                this.$initialize();
+                System.Text.Encoding.ctor.call(this);
+                this.encoderShouldEmitUTF8Identifier = encoderShouldEmitUTF8Identifier;
+                this.throwOnInvalid = throwOnInvalidBytes;
+                this.fallbackCharacter = 65533;
+            }
+        },
+        methods: {
+            Encode$3: function (s, outputBytes, outputIndex, writtenBytes) {
+                var hasBuffer = outputBytes != null;
+                var record = 0;
+
+                var write = function (args) {
+                    var len = args.length;
+                    for (var j = 0; j < len; j = (j + 1) | 0) {
+                        var code = args[System.Array.index(j, args)];
+                        if (hasBuffer) {
+                            if (outputIndex >= outputBytes.length) {
+                                throw new System.ArgumentException("bytes");
+                            }
+
+                            outputBytes[System.Array.index(Bridge.identity(outputIndex, (outputIndex = (outputIndex + 1) | 0)), outputBytes)] = code;
+                        } else {
+                            outputBytes.push(code);
+                        }
+                        record = (record + 1) | 0;
+                    }
+                };
+
+                var fallback = Bridge.fn.bind(this, $asm.$.System.Text.UTF8Encoding.f1);
+
+                if (!hasBuffer) {
+                    outputBytes = System.Array.init(0, 0, System.Byte);
+                }
+
+                for (var i = 0; i < s.length; i = (i + 1) | 0) {
+                    var charcode = s.charCodeAt(i);
+
+                    if ((charcode >= 55296) && (charcode <= 56319)) {
+                        var next = s.charCodeAt(((i + 1) | 0));
+                        if (!((next >= 56320) && (next <= 57343))) {
+                            charcode = fallback();
+                        }
+                    } else if ((charcode >= 56320) && (charcode <= 57343)) {
+                        charcode = fallback();
+                    }
+
+                    if (charcode < 128) {
+                        write(System.Array.init([charcode], System.Byte));
+                    } else if (charcode < 2048) {
+                        write(System.Array.init([(192 | (charcode >> 6)), (128 | (charcode & 63))], System.Byte));
+                    } else if (charcode < 55296 || charcode >= 57344) {
+                        write(System.Array.init([(224 | (charcode >> 12)), (128 | ((charcode >> 6) & 63)), (128 | (charcode & 63))], System.Byte));
+                    } else {
+                        i = (i + 1) | 0;
+                        var code = (65536 + (((charcode & 1023) << 10) | (s.charCodeAt(i) & 1023))) | 0;
+                        write(System.Array.init([(240 | (code >> 18)), (128 | ((code >> 12) & 63)), (128 | ((code >> 6) & 63)), (128 | (code & 63))], System.Byte));
+                    }
+                }
+
+                writtenBytes.v = record;
+
+                if (hasBuffer) {
+                    return null;
+                }
+
+                return outputBytes;
+            },
+            Decode$2: function (bytes, index, count, chars, charIndex) {
+                this._hasError = false;
+                var position = index;
+                var result = "";
+                var surrogate1 = 0;
+                var addFallback = false;
+                var endpoint = (position + count) | 0;
+
+                for (; position < endpoint; position = (position + 1) | 0) {
+                    var accumulator = 0;
+                    var extraBytes = 0;
+                    var hasError = false;
+                    var firstByte = bytes[System.Array.index(position, bytes)];
+
+                    if (firstByte <= 127) {
+                        accumulator = firstByte;
+                    } else if ((firstByte & 64) === 0) {
+                        hasError = true;
+                    } else if ((firstByte & 224) === 192) {
+                        accumulator = firstByte & 31;
+                        extraBytes = 1;
+                    } else if ((firstByte & 240) === 224) {
+                        accumulator = firstByte & 15;
+                        extraBytes = 2;
+                    } else if ((firstByte & 248) === 240) {
+                        accumulator = firstByte & 7;
+                        extraBytes = 3;
+                    } else if ((firstByte & 252) === 248) {
+                        accumulator = firstByte & 3;
+                        extraBytes = 4;
+                        hasError = true;
+                    } else if ((firstByte & 254) === 252) {
+                        accumulator = firstByte & 3;
+                        extraBytes = 5;
+                        hasError = true;
+                    } else {
+                        accumulator = firstByte;
+                        hasError = false;
+                    }
+
+                    while (extraBytes > 0) {
+                        position = (position + 1) | 0;
+
+                        if (position >= endpoint) {
+                            hasError = true;
+                            break;
+                        }
+
+                        var extraByte = bytes[System.Array.index(position, bytes)];
+                        extraBytes = (extraBytes - 1) | 0;
+
+                        if ((extraByte & 192) !== 128) {
+                            position = (position - 1) | 0;
+                            hasError = true;
+                            break;
+                        }
+
+                        accumulator = (accumulator << 6) | (extraByte & 63);
+                    }
+
+                    /* if ((accumulator == 0xFFFE) || (accumulator == 0xFFFF)) {
+                       hasError = true;
+                    }*/
+
+                    var characters = null;
+                    addFallback = false;
+                    if (!hasError) {
+                        if (surrogate1 > 0 && !((accumulator >= 56320) && (accumulator <= 57343))) {
+                            hasError = true;
+                            surrogate1 = 0;
+                        } else if ((accumulator >= 55296) && (accumulator <= 56319)) {
+                            surrogate1 = accumulator & 65535;
+                        } else if ((accumulator >= 56320) && (accumulator <= 57343)) {
+                            hasError = true;
+                            addFallback = true;
+                            surrogate1 = 0;
+                        } else {
+                            characters = System.String.fromCharCode(accumulator);
+                            surrogate1 = 0;
+                        }
+                    }
+
+                    if (hasError) {
+                        if (this.throwOnInvalid) {
+                            throw new System.Exception("Invalid character in UTF8 text");
+                        }
+
+                        result = (result || "") + String.fromCharCode(this.fallbackCharacter);
+                        this._hasError = true;
+                    } else if (surrogate1 === 0) {
+                        result = (result || "") + (characters || "");
+                    }
+                }
+
+                if (surrogate1 > 0 || addFallback) {
+                    if (this.throwOnInvalid) {
+                        throw new System.Exception("Invalid character in UTF8 text");
+                    }
+
+                    if (result.length > 0 && result.charCodeAt(((result.length - 1) | 0)) === this.fallbackCharacter) {
+                        result = (result || "") + String.fromCharCode(this.fallbackCharacter);
+                    } else {
+                        result = (result || "") + (((this.fallbackCharacter + this.fallbackCharacter) | 0));
+                    }
+
+                    this._hasError = true;
+                }
+
+                return result;
+            },
+            GetMaxByteCount: function (charCount) {
+                if (charCount < 0) {
+                    throw new System.ArgumentOutOfRangeException("charCount");
+                }
+
+
+                var byteCount = System.Int64(charCount).add(System.Int64(1));
+                byteCount = byteCount.mul(System.Int64(3));
+
+                if (byteCount.gt(System.Int64(2147483647))) {
+                    throw new System.ArgumentOutOfRangeException("charCount");
+                }
+
+                return System.Int64.clip32(byteCount);
+            },
+            GetMaxCharCount: function (byteCount) {
+                if (byteCount < 0) {
+                    throw new System.ArgumentOutOfRangeException("byteCount");
+                }
+
+                var charCount = System.Int64(byteCount).add(System.Int64(1));
+
+                if (charCount.gt(System.Int64(2147483647))) {
+                    throw new System.ArgumentOutOfRangeException("byteCount");
+                }
+
+                return System.Int64.clip32(charCount);
+            }
+        }
+    });
+
+    Bridge.ns("System.Text.UTF8Encoding", $asm.$);
+
+    Bridge.apply($asm.$.System.Text.UTF8Encoding, {
+        f1: function () {
+            if (this.throwOnInvalid) {
+                throw new System.Exception("Invalid character in UTF8 text");
+            }
+
+            return this.fallbackCharacter;
+        }
+    });
+
+    // @source io.js
+
+    Bridge.define("System.IO.__Error", {
+        statics: {
+            methods: {
+                EndOfFile: function () {
+                    throw new System.IO.EndOfStreamException.$ctor1("IO.EOF_ReadBeyondEOF");
+                },
+                FileNotOpen: function () {
+                    throw new System.Exception("ObjectDisposed_FileClosed");
+                },
+                StreamIsClosed: function () {
+                    throw new System.Exception("ObjectDisposed_StreamClosed");
+                },
+                MemoryStreamNotExpandable: function () {
+                    throw new System.NotSupportedException("NotSupported_MemStreamNotExpandable");
+                },
+                ReaderClosed: function () {
+                    throw new System.Exception("ObjectDisposed_ReaderClosed");
+                },
+                ReadNotSupported: function () {
+                    throw new System.NotSupportedException("NotSupported_UnreadableStream");
+                },
+                SeekNotSupported: function () {
+                    throw new System.NotSupportedException("NotSupported_UnseekableStream");
+                },
+                WrongAsyncResult: function () {
+                    throw new System.ArgumentException("Arg_WrongAsyncResult");
+                },
+                EndReadCalledTwice: function () {
+                    // Should ideally be InvalidOperationExc but we can't maitain parity with Stream and FileStream without some work
+                    throw new System.ArgumentException("InvalidOperation_EndReadCalledMultiple");
+                },
+                EndWriteCalledTwice: function () {
+                    // Should ideally be InvalidOperationExc but we can't maintain parity with Stream and FileStream without some work
+                    throw new System.ArgumentException("InvalidOperation_EndWriteCalledMultiple");
+                },
+                WriteNotSupported: function () {
+                    throw new System.NotSupportedException("NotSupported_UnwritableStream");
+                },
+                WriterClosed: function () {
+                    throw new System.Exception("ObjectDisposed_WriterClosed");
+                }
+            }
+        }
+    });
+
+    Bridge.define("System.IO.BinaryReader", {
+        inherits: [System.IDisposable],
+        statics: {
+            fields: {
+                MaxCharBytesSize: 0
+            },
+            ctors: {
+                init: function () {
+                    this.MaxCharBytesSize = 128;
+                }
+            }
+        },
+        fields: {
+            m_stream: null,
+            m_buffer: null,
+            m_encoding: null,
+            m_charBytes: null,
+            m_singleChar: null,
+            m_charBuffer: null,
+            m_maxCharsSize: 0,
+            m_2BytesPerChar: false,
+            m_isMemoryStream: false,
+            m_leaveOpen: false,
+            lastCharsRead: 0
+        },
+        props: {
+            BaseStream: {
+                get: function () {
+                    return this.m_stream;
+                }
+            }
+        },
+        alias: ["Dispose", "System$IDisposable$dispose"],
+        ctors: {
+            init: function () {
+                this.lastCharsRead = 0;
+            },
+            ctor: function (input) {
+                System.IO.BinaryReader.$ctor2.call(this, input, new System.Text.UTF8Encoding.ctor(), false);
+            },
+            $ctor1: function (input, encoding) {
+                System.IO.BinaryReader.$ctor2.call(this, input, encoding, false);
+            },
+            $ctor2: function (input, encoding, leaveOpen) {
+                this.$initialize();
+                if (input == null) {
+                    throw new System.ArgumentNullException("input");
+                }
+                if (encoding == null) {
+                    throw new System.ArgumentNullException("encoding");
+                }
+                if (!input.CanRead) {
+                    throw new System.ArgumentException("Argument_StreamNotReadable");
+                }
+                this.m_stream = input;
+                this.m_encoding = encoding;
+                this.m_maxCharsSize = encoding.GetMaxCharCount(System.IO.BinaryReader.MaxCharBytesSize);
+                var minBufferSize = encoding.GetMaxByteCount(1); // max bytes per one char
+                if (minBufferSize < 23) {
+                    minBufferSize = 23;
+                }
+                this.m_buffer = System.Array.init(minBufferSize, 0, System.Byte);
+                // m_charBuffer and m_charBytes will be left null.
+
+                // For Encodings that always use 2 bytes per char (or more),
+                // special case them here to make Read() & Peek() faster.
+                this.m_2BytesPerChar = Bridge.is(encoding, System.Text.UnicodeEncoding);
+                // check if BinaryReader is based on MemoryStream, and keep this for it's life
+                // we cannot use "as" operator, since derived classes are not allowed
+                this.m_isMemoryStream = (Bridge.referenceEquals(Bridge.getType(this.m_stream), System.IO.MemoryStream));
+                this.m_leaveOpen = leaveOpen;
+
+            }
+        },
+        methods: {
+            Close: function () {
+                this.Dispose$1(true);
+            },
+            Dispose$1: function (disposing) {
+                if (disposing) {
+                    var copyOfStream = this.m_stream;
+                    this.m_stream = null;
+                    if (copyOfStream != null && !this.m_leaveOpen) {
+                        copyOfStream.Close();
+                    }
+                }
+                this.m_stream = null;
+                this.m_buffer = null;
+                this.m_encoding = null;
+                this.m_charBytes = null;
+                this.m_singleChar = null;
+                this.m_charBuffer = null;
+            },
+            Dispose: function () {
+                this.Dispose$1(true);
+            },
+            PeekChar: function () {
+
+                if (this.m_stream == null) {
+                    System.IO.__Error.FileNotOpen();
+                }
+
+                if (!this.m_stream.CanSeek) {
+                    return -1;
+                }
+                var origPos = this.m_stream.Position;
+                var ch = this.Read();
+                this.m_stream.Position = origPos;
+                return ch;
+            },
+            Read: function () {
+
+                if (this.m_stream == null) {
+                    System.IO.__Error.FileNotOpen();
+                }
+                return this.InternalReadOneChar();
+            },
+            Read$2: function (buffer, index, count) {
+                if (buffer == null) {
+                    throw new System.ArgumentNullException("buffer", "ArgumentNull_Buffer");
+                }
+                if (index < 0) {
+                    throw new System.ArgumentOutOfRangeException("index", "ArgumentOutOfRange_NeedNonNegNum");
+                }
+                if (count < 0) {
+                    throw new System.ArgumentOutOfRangeException("count", "ArgumentOutOfRange_NeedNonNegNum");
+                }
+                if (((buffer.length - index) | 0) < count) {
+                    throw new System.ArgumentException("Argument_InvalidOffLen");
+                }
+
+                if (this.m_stream == null) {
+                    System.IO.__Error.FileNotOpen();
+                }
+
+                // SafeCritical: index and count have already been verified to be a valid range for the buffer
+                return this.InternalReadChars(buffer, index, count);
+            },
+            Read$1: function (buffer, index, count) {
+                if (buffer == null) {
+                    throw new System.ArgumentNullException("buffer", "ArgumentNull_Buffer");
+                }
+                if (index < 0) {
+                    throw new System.ArgumentOutOfRangeException("index", "ArgumentOutOfRange_NeedNonNegNum");
+                }
+                if (count < 0) {
+                    throw new System.ArgumentOutOfRangeException("count", "ArgumentOutOfRange_NeedNonNegNum");
+                }
+                if (((buffer.length - index) | 0) < count) {
+                    throw new System.ArgumentException("Argument_InvalidOffLen");
+                }
+
+                if (this.m_stream == null) {
+                    System.IO.__Error.FileNotOpen();
+                }
+                return this.m_stream.Read(buffer, index, count);
+            },
+            ReadBoolean: function () {
+                this.FillBuffer(1);
+                return (this.m_buffer[System.Array.index(0, this.m_buffer)] !== 0);
+            },
+            ReadByte: function () {
+                // Inlined to avoid some method call overhead with FillBuffer.
+                if (this.m_stream == null) {
+                    System.IO.__Error.FileNotOpen();
+                }
+
+                var b = this.m_stream.ReadByte();
+                if (b === -1) {
+                    System.IO.__Error.EndOfFile();
+                }
+                return (b & 255);
+            },
+            ReadSByte: function () {
+                this.FillBuffer(1);
+                return Bridge.Int.sxb((this.m_buffer[System.Array.index(0, this.m_buffer)]) & 255);
+            },
+            ReadChar: function () {
+                var value = this.Read();
+                if (value === -1) {
+                    System.IO.__Error.EndOfFile();
+                }
+                return (value & 65535);
+            },
+            ReadInt16: function () {
+                this.FillBuffer(2);
+                return Bridge.Int.sxs((this.m_buffer[System.Array.index(0, this.m_buffer)] | this.m_buffer[System.Array.index(1, this.m_buffer)] << 8) & 65535);
+            },
+            ReadUInt16: function () {
+                this.FillBuffer(2);
+                return ((this.m_buffer[System.Array.index(0, this.m_buffer)] | this.m_buffer[System.Array.index(1, this.m_buffer)] << 8) & 65535);
+            },
+            ReadInt32: function () {
+                if (this.m_isMemoryStream) {
+                    if (this.m_stream == null) {
+                        System.IO.__Error.FileNotOpen();
+                    }
+                    // read directly from MemoryStream buffer
+                    var mStream = Bridge.as(this.m_stream, System.IO.MemoryStream);
+
+                    return mStream.InternalReadInt32();
+                } else {
+                    this.FillBuffer(4);
+                    return this.m_buffer[System.Array.index(0, this.m_buffer)] | this.m_buffer[System.Array.index(1, this.m_buffer)] << 8 | this.m_buffer[System.Array.index(2, this.m_buffer)] << 16 | this.m_buffer[System.Array.index(3, this.m_buffer)] << 24;
+                }
+            },
+            ReadUInt32: function () {
+                this.FillBuffer(4);
+                return ((this.m_buffer[System.Array.index(0, this.m_buffer)] | this.m_buffer[System.Array.index(1, this.m_buffer)] << 8 | this.m_buffer[System.Array.index(2, this.m_buffer)] << 16 | this.m_buffer[System.Array.index(3, this.m_buffer)] << 24) >>> 0);
+            },
+            ReadInt64: function () {
+                this.FillBuffer(8);
+                var lo = (this.m_buffer[System.Array.index(0, this.m_buffer)] | this.m_buffer[System.Array.index(1, this.m_buffer)] << 8 | this.m_buffer[System.Array.index(2, this.m_buffer)] << 16 | this.m_buffer[System.Array.index(3, this.m_buffer)] << 24) >>> 0;
+                var hi = (this.m_buffer[System.Array.index(4, this.m_buffer)] | this.m_buffer[System.Array.index(5, this.m_buffer)] << 8 | this.m_buffer[System.Array.index(6, this.m_buffer)] << 16 | this.m_buffer[System.Array.index(7, this.m_buffer)] << 24) >>> 0;
+                return System.Int64.clip64(System.UInt64(hi)).shl(32).or(System.Int64(lo));
+            },
+            ReadUInt64: function () {
+                this.FillBuffer(8);
+                var lo = (this.m_buffer[System.Array.index(0, this.m_buffer)] | this.m_buffer[System.Array.index(1, this.m_buffer)] << 8 | this.m_buffer[System.Array.index(2, this.m_buffer)] << 16 | this.m_buffer[System.Array.index(3, this.m_buffer)] << 24) >>> 0;
+                var hi = (this.m_buffer[System.Array.index(4, this.m_buffer)] | this.m_buffer[System.Array.index(5, this.m_buffer)] << 8 | this.m_buffer[System.Array.index(6, this.m_buffer)] << 16 | this.m_buffer[System.Array.index(7, this.m_buffer)] << 24) >>> 0;
+                return System.UInt64(hi).shl(32).or(System.UInt64(lo));
+            },
+            ReadSingle: function () {
+                this.FillBuffer(4);
+                var tmpBuffer = (this.m_buffer[System.Array.index(0, this.m_buffer)] | this.m_buffer[System.Array.index(1, this.m_buffer)] << 8 | this.m_buffer[System.Array.index(2, this.m_buffer)] << 16 | this.m_buffer[System.Array.index(3, this.m_buffer)] << 24) >>> 0;
+                return System.BitConverter.toSingle(System.BitConverter.getBytes$8(tmpBuffer), 0);
+            },
+            ReadDouble: function () {
+                this.FillBuffer(8);
+                var lo = (this.m_buffer[System.Array.index(0, this.m_buffer)] | this.m_buffer[System.Array.index(1, this.m_buffer)] << 8 | this.m_buffer[System.Array.index(2, this.m_buffer)] << 16 | this.m_buffer[System.Array.index(3, this.m_buffer)] << 24) >>> 0;
+                var hi = (this.m_buffer[System.Array.index(4, this.m_buffer)] | this.m_buffer[System.Array.index(5, this.m_buffer)] << 8 | this.m_buffer[System.Array.index(6, this.m_buffer)] << 16 | this.m_buffer[System.Array.index(7, this.m_buffer)] << 24) >>> 0;
+
+                var tmpBuffer = System.UInt64(hi).shl(32).or(System.UInt64(lo));
+                return System.BitConverter.toDouble(System.BitConverter.getBytes$9(tmpBuffer), 0);
+            },
+            ReadDecimal: function () {
+                this.FillBuffer(23);
+                try {
+                    return System.Decimal.fromBytes(this.m_buffer);
+                }
+                catch ($e1) {
+                    $e1 = System.Exception.create($e1);
+                    var e;
+                    if (Bridge.is($e1, System.ArgumentException)) {
+                        e = $e1;
+                        // ReadDecimal cannot leak out ArgumentException
+                        throw new System.IO.IOException.$ctor2("Arg_DecBitCtor", e);
+                    } else {
+                        throw $e1;
+                    }
+                }
+            },
+            ReadString: function () {
+
+                if (this.m_stream == null) {
+                    System.IO.__Error.FileNotOpen();
+                }
+
+                var currPos = 0;
+                var n;
+                var stringLength;
+                var readLength;
+                var charsRead;
+
+                // Length of the string in bytes, not chars
+                stringLength = this.Read7BitEncodedInt();
+                if (stringLength < 0) {
+                    throw new System.IO.IOException.$ctor1("IO.IO_InvalidStringLen_Len");
+                }
+
+                if (stringLength === 0) {
+                    return "";
+                }
+
+                if (this.m_charBytes == null) {
+                    this.m_charBytes = System.Array.init(System.IO.BinaryReader.MaxCharBytesSize, 0, System.Byte);
+                }
+
+                if (this.m_charBuffer == null) {
+                    this.m_charBuffer = System.Array.init(this.m_maxCharsSize, 0, System.Char);
+                }
+
+                var sb = null;
+                do {
+                    readLength = ((((stringLength - currPos) | 0)) > System.IO.BinaryReader.MaxCharBytesSize) ? System.IO.BinaryReader.MaxCharBytesSize : (((stringLength - currPos) | 0));
+
+                    n = this.m_stream.Read(this.m_charBytes, 0, readLength);
+                    if (n === 0) {
+                        System.IO.__Error.EndOfFile();
+                    }
+
+                    charsRead = this.m_encoding.GetChars$2(this.m_charBytes, 0, n, this.m_charBuffer, 0);
+
+                    if (currPos === 0 && n === stringLength) {
+                        return System.String.fromCharArray(this.m_charBuffer, 0, charsRead);
+                    }
+
+                    if (sb == null) {
+                        sb = new System.Text.StringBuilder("", stringLength);
+                    }
+
+                    for (var i = 0; i < charsRead; i = (i + 1) | 0) {
+                        sb.append(String.fromCharCode(this.m_charBuffer[System.Array.index(i, this.m_charBuffer)]));
+                    }
+
+                    currPos = (currPos + n) | 0;
+
+                } while (currPos < stringLength);
+
+                return sb.toString();
+            },
+            InternalReadChars: function (buffer, index, count) {
+
+                var charsRemaining = count;
+
+                if (this.m_charBytes == null) {
+                    this.m_charBytes = System.Array.init(System.IO.BinaryReader.MaxCharBytesSize, 0, System.Byte);
+                }
+
+                if (index < 0 || charsRemaining < 0 || ((index + charsRemaining) | 0) > buffer.length) {
+                    throw new System.ArgumentOutOfRangeException("charsRemaining");
+                }
+
+                while (charsRemaining > 0) {
+
+                    var ch = this.InternalReadOneChar(true);
+
+                    if (ch === -1) {
+                        break;
+                    }
+
+                    buffer[System.Array.index(index, buffer)] = ch & 65535;
+
+                    if (this.lastCharsRead === 2) {
+                        buffer[System.Array.index(((index = (index + 1) | 0)), buffer)] = this.m_singleChar[System.Array.index(1, this.m_singleChar)];
+                        charsRemaining = (charsRemaining - 1) | 0;
+                    }
+
+                    charsRemaining = (charsRemaining - 1) | 0;
+                    index = (index + 1) | 0;
+                }
+
+                // this should never fail
+
+                // we may have read fewer than the number of characters requested if end of stream reached
+                // or if the encoding makes the char count too big for the buffer (e.g. fallback sequence)
+                return (((count - charsRemaining) | 0));
+            },
+            InternalReadOneChar: function (allowSurrogate) {
+                if (allowSurrogate === void 0) { allowSurrogate = false; }
+                // I know having a separate InternalReadOneChar method seems a little
+                // redundant, but this makes a scenario like the security parser code
+                // 20% faster, in addition to the optimizations for UnicodeEncoding I
+                // put in InternalReadChars.
+                var charsRead = 0;
+                var numBytes = 0;
+                var posSav = System.Int64(0);
+
+                if (this.m_stream.CanSeek) {
+                    posSav = this.m_stream.Position;
+                }
+
+                if (this.m_charBytes == null) {
+                    this.m_charBytes = System.Array.init(System.IO.BinaryReader.MaxCharBytesSize, 0, System.Byte); //
+                }
+                if (this.m_singleChar == null) {
+                    this.m_singleChar = System.Array.init(2, 0, System.Char);
+                }
+
+                var addByte = false;
+                var internalPos = 0;
+                while (charsRead === 0) {
+                    numBytes = this.m_2BytesPerChar ? 2 : 1;
+
+                    if (Bridge.is(this.m_encoding, System.Text.UTF32Encoding)) {
+                        numBytes = 4;
+                    }
+
+                    if (addByte) {
+                        var r = this.m_stream.ReadByte();
+                        this.m_charBytes[System.Array.index(((internalPos = (internalPos + 1) | 0)), this.m_charBytes)] = r & 255;
+                        if (r === -1) {
+                            numBytes = 0;
+                        }
+
+                        if (numBytes === 2) {
+                            r = this.m_stream.ReadByte();
+                            this.m_charBytes[System.Array.index(((internalPos = (internalPos + 1) | 0)), this.m_charBytes)] = r & 255;
+                            if (r === -1) {
+                                numBytes = 1;
+                            }
+                        }
+                    } else {
+                        var r1 = this.m_stream.ReadByte();
+                        this.m_charBytes[System.Array.index(0, this.m_charBytes)] = r1 & 255;
+                        internalPos = 0;
+                        if (r1 === -1) {
+                            numBytes = 0;
+                        }
+
+                        if (numBytes === 2) {
+                            r1 = this.m_stream.ReadByte();
+                            this.m_charBytes[System.Array.index(1, this.m_charBytes)] = r1 & 255;
+                            if (r1 === -1) {
+                                numBytes = 1;
+                            }
+                            internalPos = 1;
+                        } else if (numBytes === 4) {
+                            r1 = this.m_stream.ReadByte();
+                            this.m_charBytes[System.Array.index(1, this.m_charBytes)] = r1 & 255;
+                            if (r1 === -1) {
+                                return -1;
+                            }
+
+                            r1 = this.m_stream.ReadByte();
+                            this.m_charBytes[System.Array.index(2, this.m_charBytes)] = r1 & 255;
+                            if (r1 === -1) {
+                                return -1;
+                            }
+
+                            r1 = this.m_stream.ReadByte();
+                            this.m_charBytes[System.Array.index(3, this.m_charBytes)] = r1 & 255;
+                            if (r1 === -1) {
+                                return -1;
+                            }
+
+                            internalPos = 3;
+                        }
+                    }
+
+
+                    if (numBytes === 0) {
+                        return -1;
+                    }
+
+                    addByte = false;
+                    try {
+                        charsRead = this.m_encoding.GetChars$2(this.m_charBytes, 0, ((internalPos + 1) | 0), this.m_singleChar, 0);
+
+                        if (!allowSurrogate && charsRead === 2) {
+                            throw new System.ArgumentException();
+                        }
+                    }
+                    catch ($e1) {
+                        $e1 = System.Exception.create($e1);
+                        // Handle surrogate char
+
+                        if (this.m_stream.CanSeek) {
+                            this.m_stream.Seek((posSav.sub(this.m_stream.Position)), System.IO.SeekOrigin.Current);
+                        }
+                        // else - we can't do much here
+
+                        throw $e1;
+                    }
+
+                    if (this.m_encoding._hasError) {
+                        charsRead = 0;
+                        addByte = true;
+                    }
+
+                    if (!allowSurrogate) {
+                    }
+                }
+
+                this.lastCharsRead = charsRead;
+
+                if (charsRead === 0) {
+                    return -1;
+                }
+
+                return this.m_singleChar[System.Array.index(0, this.m_singleChar)];
+            },
+            ReadChars: function (count) {
+                if (count < 0) {
+                    throw new System.ArgumentOutOfRangeException("count", "ArgumentOutOfRange_NeedNonNegNum");
+                }
+                if (this.m_stream == null) {
+                    System.IO.__Error.FileNotOpen();
+                }
+
+                if (count === 0) {
+                    return System.Array.init(0, 0, System.Char);
+                }
+
+                // SafeCritical: we own the chars buffer, and therefore can guarantee that the index and count are valid
+                var chars = System.Array.init(count, 0, System.Char);
+                var n = this.InternalReadChars(chars, 0, count);
+                if (n !== count) {
+                    var copy = System.Array.init(n, 0, System.Char);
+                    System.Array.copy(chars, 0, copy, 0, Bridge.Int.mul(2, n)); // sizeof(char)
+                    chars = copy;
+                }
+
+                return chars;
+            },
+            ReadBytes: function (count) {
+                if (count < 0) {
+                    throw new System.ArgumentOutOfRangeException("count", "ArgumentOutOfRange_NeedNonNegNum");
+                }
+                if (this.m_stream == null) {
+                    System.IO.__Error.FileNotOpen();
+                }
+
+                if (count === 0) {
+                    return System.Array.init(0, 0, System.Byte);
+                }
+
+                var result = System.Array.init(count, 0, System.Byte);
+
+                var numRead = 0;
+                do {
+                    var n = this.m_stream.Read(result, numRead, count);
+                    if (n === 0) {
+                        break;
+                    }
+                    numRead = (numRead + n) | 0;
+                    count = (count - n) | 0;
+                } while (count > 0);
+
+                if (numRead !== result.length) {
+                    // Trim array.  This should happen on EOF & possibly net streams.
+                    var copy = System.Array.init(numRead, 0, System.Byte);
+                    System.Array.copy(result, 0, copy, 0, numRead);
+                    result = copy;
+                }
+
+                return result;
+            },
+            FillBuffer: function (numBytes) {
+                if (this.m_buffer != null && (numBytes < 0 || numBytes > this.m_buffer.length)) {
+                    throw new System.ArgumentOutOfRangeException("numBytes", "ArgumentOutOfRange_BinaryReaderFillBuffer");
+                }
+                var bytesRead = 0;
+                var n = 0;
+
+                if (this.m_stream == null) {
+                    System.IO.__Error.FileNotOpen();
+                }
+
+                // Need to find a good threshold for calling ReadByte() repeatedly
+                // vs. calling Read(byte[], int, int) for both buffered & unbuffered
+                // streams.
+                if (numBytes === 1) {
+                    n = this.m_stream.ReadByte();
+                    if (n === -1) {
+                        System.IO.__Error.EndOfFile();
+                    }
+                    this.m_buffer[System.Array.index(0, this.m_buffer)] = n & 255;
+                    return;
+                }
+
+                do {
+                    n = this.m_stream.Read(this.m_buffer, bytesRead, ((numBytes - bytesRead) | 0));
+                    if (n === 0) {
+                        System.IO.__Error.EndOfFile();
+                    }
+                    bytesRead = (bytesRead + n) | 0;
+                } while (bytesRead < numBytes);
+            },
+            Read7BitEncodedInt: function () {
+                // Read out an Int32 7 bits at a time.  The high bit
+                // of the byte when on means to continue reading more bytes.
+                var count = 0;
+                var shift = 0;
+                var b;
+                do {
+                    // Check for a corrupted stream.  Read a max of 5 bytes.
+                    // In a future version, add a DataFormatException.
+                    if (shift === 35) {
+                        throw new System.FormatException("Format_Bad7BitInt32");
+                    }
+
+                    // ReadByte handles end of stream cases for us.
+                    b = this.ReadByte();
+                    count = count | ((b & 127) << shift);
+                    shift = (shift + 7) | 0;
+                } while ((b & 128) !== 0);
+                return count;
+            }
+        }
+    });
+
+    Bridge.define("System.IO.BinaryWriter", {
+        inherits: [System.IDisposable],
+        statics: {
+            fields: {
+                Null: null,
+                LargeByteBufferSize: 0
+            },
+            ctors: {
+                init: function () {
+                    this.Null = new System.IO.BinaryWriter.ctor();
+                    this.LargeByteBufferSize = 256;
+                }
+            }
+        },
+        fields: {
+            OutStream: null,
+            _buffer: null,
+            _encoding: null,
+            _leaveOpen: false,
+            _tmpOneCharBuffer: null
+        },
+        props: {
+            BaseStream: {
+                get: function () {
+                    this.Flush();
+                    return this.OutStream;
+                }
+            }
+        },
+        alias: ["Dispose", "System$IDisposable$dispose"],
+        ctors: {
+            ctor: function () {
+                this.$initialize();
+                this.OutStream = System.IO.Stream.Null;
+                this._buffer = System.Array.init(16, 0, System.Byte);
+                this._encoding = new System.Text.UTF8Encoding.$ctor2(false, true);
+            },
+            $ctor1: function (output) {
+                System.IO.BinaryWriter.$ctor3.call(this, output, new System.Text.UTF8Encoding.$ctor2(false, true), false);
+            },
+            $ctor2: function (output, encoding) {
+                System.IO.BinaryWriter.$ctor3.call(this, output, encoding, false);
+            },
+            $ctor3: function (output, encoding, leaveOpen) {
+                this.$initialize();
+                if (output == null) {
+                    throw new System.ArgumentNullException("output");
+                }
+                if (encoding == null) {
+                    throw new System.ArgumentNullException("encoding");
+                }
+                if (!output.CanWrite) {
+                    throw new System.ArgumentException("Argument_StreamNotWritable");
+                }
+
+                this.OutStream = output;
+                this._buffer = System.Array.init(16, 0, System.Byte);
+                this._encoding = encoding;
+                this._leaveOpen = leaveOpen;
+            }
+        },
+        methods: {
+            Close: function () {
+                this.Dispose$1(true);
+            },
+            Dispose$1: function (disposing) {
+                if (disposing) {
+                    if (this._leaveOpen) {
+                        this.OutStream.Flush();
+                    } else {
+                        this.OutStream.Close();
+                    }
+                }
+            },
+            Dispose: function () {
+                this.Dispose$1(true);
+            },
+            Flush: function () {
+                this.OutStream.Flush();
+            },
+            Seek: function (offset, origin) {
+                return this.OutStream.Seek(System.Int64(offset), origin);
+            },
+            Write: function (value) {
+                this._buffer[System.Array.index(0, this._buffer)] = (value ? 1 : 0) & 255;
+                this.OutStream.Write(this._buffer, 0, 1);
+            },
+            Write$1: function (value) {
+                this.OutStream.WriteByte(value);
+            },
+            Write$12: function (value) {
+                this.OutStream.WriteByte((value & 255));
+            },
+            Write$2: function (buffer) {
+                if (buffer == null) {
+                    throw new System.ArgumentNullException("buffer");
+                }
+                this.OutStream.Write(buffer, 0, buffer.length);
+            },
+            Write$3: function (buffer, index, count) {
+                this.OutStream.Write(buffer, index, count);
+            },
+            Write$4: function (ch) {
+                if (System.Char.isSurrogate(ch)) {
+                    throw new System.ArgumentException("Arg_SurrogatesNotAllowedAsSingleChar");
+                }
+
+                var numBytes = 0;
+                numBytes = this._encoding.GetBytes$3(System.Array.init([ch], System.Char), 0, 1, this._buffer, 0);
+
+                this.OutStream.Write(this._buffer, 0, numBytes);
+            },
+            Write$5: function (chars) {
+                if (chars == null) {
+                    throw new System.ArgumentNullException("chars");
+                }
+
+                var bytes = this._encoding.GetBytes$1(chars, 0, chars.length);
+                this.OutStream.Write(bytes, 0, bytes.length);
+            },
+            Write$6: function (chars, index, count) {
+                var bytes = this._encoding.GetBytes$1(chars, index, count);
+                this.OutStream.Write(bytes, 0, bytes.length);
+            },
+            Write$8: function (value) {
+                var TmpValue = System.Int64.clipu64(System.BitConverter.doubleToInt64Bits(value));
+                this._buffer[System.Array.index(0, this._buffer)] = System.Int64.clipu8(TmpValue);
+                this._buffer[System.Array.index(1, this._buffer)] = System.Int64.clipu8(TmpValue.shru(8));
+                this._buffer[System.Array.index(2, this._buffer)] = System.Int64.clipu8(TmpValue.shru(16));
+                this._buffer[System.Array.index(3, this._buffer)] = System.Int64.clipu8(TmpValue.shru(24));
+                this._buffer[System.Array.index(4, this._buffer)] = System.Int64.clipu8(TmpValue.shru(32));
+                this._buffer[System.Array.index(5, this._buffer)] = System.Int64.clipu8(TmpValue.shru(40));
+                this._buffer[System.Array.index(6, this._buffer)] = System.Int64.clipu8(TmpValue.shru(48));
+                this._buffer[System.Array.index(7, this._buffer)] = System.Int64.clipu8(TmpValue.shru(56));
+                this.OutStream.Write(this._buffer, 0, 8);
+            },
+            Write$7: function (value) {
+                var buf = value.getBytes();
+                this.OutStream.Write(buf, 0, 23);
+            },
+            Write$9: function (value) {
+                this._buffer[System.Array.index(0, this._buffer)] = value & 255;
+                this._buffer[System.Array.index(1, this._buffer)] = (value >> 8) & 255;
+                this.OutStream.Write(this._buffer, 0, 2);
+            },
+            Write$15: function (value) {
+                this._buffer[System.Array.index(0, this._buffer)] = value & 255;
+                this._buffer[System.Array.index(1, this._buffer)] = (value >> 8) & 255;
+                this.OutStream.Write(this._buffer, 0, 2);
+            },
+            Write$10: function (value) {
+                this._buffer[System.Array.index(0, this._buffer)] = value & 255;
+                this._buffer[System.Array.index(1, this._buffer)] = (value >> 8) & 255;
+                this._buffer[System.Array.index(2, this._buffer)] = (value >> 16) & 255;
+                this._buffer[System.Array.index(3, this._buffer)] = (value >> 24) & 255;
+                this.OutStream.Write(this._buffer, 0, 4);
+            },
+            Write$16: function (value) {
+                this._buffer[System.Array.index(0, this._buffer)] = value & 255;
+                this._buffer[System.Array.index(1, this._buffer)] = (value >>> 8) & 255;
+                this._buffer[System.Array.index(2, this._buffer)] = (value >>> 16) & 255;
+                this._buffer[System.Array.index(3, this._buffer)] = (value >>> 24) & 255;
+                this.OutStream.Write(this._buffer, 0, 4);
+            },
+            Write$11: function (value) {
+                this._buffer[System.Array.index(0, this._buffer)] = System.Int64.clipu8(value);
+                this._buffer[System.Array.index(1, this._buffer)] = System.Int64.clipu8(value.shr(8));
+                this._buffer[System.Array.index(2, this._buffer)] = System.Int64.clipu8(value.shr(16));
+                this._buffer[System.Array.index(3, this._buffer)] = System.Int64.clipu8(value.shr(24));
+                this._buffer[System.Array.index(4, this._buffer)] = System.Int64.clipu8(value.shr(32));
+                this._buffer[System.Array.index(5, this._buffer)] = System.Int64.clipu8(value.shr(40));
+                this._buffer[System.Array.index(6, this._buffer)] = System.Int64.clipu8(value.shr(48));
+                this._buffer[System.Array.index(7, this._buffer)] = System.Int64.clipu8(value.shr(56));
+                this.OutStream.Write(this._buffer, 0, 8);
+            },
+            Write$17: function (value) {
+                this._buffer[System.Array.index(0, this._buffer)] = System.Int64.clipu8(value);
+                this._buffer[System.Array.index(1, this._buffer)] = System.Int64.clipu8(value.shru(8));
+                this._buffer[System.Array.index(2, this._buffer)] = System.Int64.clipu8(value.shru(16));
+                this._buffer[System.Array.index(3, this._buffer)] = System.Int64.clipu8(value.shru(24));
+                this._buffer[System.Array.index(4, this._buffer)] = System.Int64.clipu8(value.shru(32));
+                this._buffer[System.Array.index(5, this._buffer)] = System.Int64.clipu8(value.shru(40));
+                this._buffer[System.Array.index(6, this._buffer)] = System.Int64.clipu8(value.shru(48));
+                this._buffer[System.Array.index(7, this._buffer)] = System.Int64.clipu8(value.shru(56));
+                this.OutStream.Write(this._buffer, 0, 8);
+            },
+            Write$13: function (value) {
+                var TmpValue = System.BitConverter.toUInt32(System.BitConverter.getBytes$6(value), 0);
+                this._buffer[System.Array.index(0, this._buffer)] = TmpValue & 255;
+                this._buffer[System.Array.index(1, this._buffer)] = (TmpValue >>> 8) & 255;
+                this._buffer[System.Array.index(2, this._buffer)] = (TmpValue >>> 16) & 255;
+                this._buffer[System.Array.index(3, this._buffer)] = (TmpValue >>> 24) & 255;
+                this.OutStream.Write(this._buffer, 0, 4);
+            },
+            Write$14: function (value) {
+                if (value == null) {
+                    throw new System.ArgumentNullException("value");
+                }
+
+                var buffer = this._encoding.GetBytes$2(value);
+                var len = buffer.length;
+                this.Write7BitEncodedInt(len);
+                this.OutStream.Write(buffer, 0, len);
+            },
+            Write7BitEncodedInt: function (value) {
+                // Write out an int 7 bits at a time.  The high bit of the byte,
+                // when on, tells reader to continue reading more bytes.
+                var v = value >>> 0; // support negative numbers
+                while (v >= 128) {
+                    this.Write$1(((((v | 128) >>> 0)) & 255));
+                    v = v >>> 7;
+                }
+                this.Write$1((v & 255));
+            }
+        }
+    });
+
+    Bridge.define("System.IO.Stream", {
+        inherits: [System.IDisposable],
+        statics: {
+            fields: {
+                Null: null,
+                _DefaultCopyBufferSize: 0
+            },
+            ctors: {
+                init: function () {
+                    this.Null = new System.IO.Stream.NullStream();
+                    this._DefaultCopyBufferSize = 81920;
+                }
+            },
+            methods: {
+                Synchronized: function (stream) {
+                    if (stream == null) {
+                        throw new System.ArgumentNullException("stream");
+                    }
+
+                    return stream;
+                },
+                BlockingEndRead: function (asyncResult) {
+
+                    return System.IO.Stream.SynchronousAsyncResult.EndRead(asyncResult);
+                },
+                BlockingEndWrite: function (asyncResult) {
+                    System.IO.Stream.SynchronousAsyncResult.EndWrite(asyncResult);
+                }
+            }
+        },
+        props: {
+            CanTimeout: {
+                get: function () {
+                    return false;
+                }
+            },
+            ReadTimeout: {
+                get: function () {
+                    throw new System.InvalidOperationException();
+                },
+                set: function (value) {
+                    throw new System.InvalidOperationException();
+                }
+            },
+            WriteTimeout: {
+                get: function () {
+                    throw new System.InvalidOperationException();
+                },
+                set: function (value) {
+                    throw new System.InvalidOperationException();
+                }
+            }
+        },
+        alias: ["Dispose", "System$IDisposable$dispose"],
+        methods: {
+            CopyTo: function (destination) {
+                if (destination == null) {
+                    throw new System.ArgumentNullException("destination");
+                }
+                if (!this.CanRead && !this.CanWrite) {
+                    throw new System.Exception();
+                }
+                if (!destination.CanRead && !destination.CanWrite) {
+                    throw new System.Exception("destination");
+                }
+                if (!this.CanRead) {
+                    throw new System.NotSupportedException();
+                }
+                if (!destination.CanWrite) {
+                    throw new System.NotSupportedException();
+                }
+
+                this.InternalCopyTo(destination, System.IO.Stream._DefaultCopyBufferSize);
+            },
+            CopyTo$1: function (destination, bufferSize) {
+                if (destination == null) {
+                    throw new System.ArgumentNullException("destination");
+                }
+                if (bufferSize <= 0) {
+                    throw new System.ArgumentOutOfRangeException("bufferSize");
+                }
+                if (!this.CanRead && !this.CanWrite) {
+                    throw new System.Exception();
+                }
+                if (!destination.CanRead && !destination.CanWrite) {
+                    throw new System.Exception("destination");
+                }
+                if (!this.CanRead) {
+                    throw new System.NotSupportedException();
+                }
+                if (!destination.CanWrite) {
+                    throw new System.NotSupportedException();
+                }
+
+                this.InternalCopyTo(destination, bufferSize);
+            },
+            InternalCopyTo: function (destination, bufferSize) {
+
+                var buffer = System.Array.init(bufferSize, 0, System.Byte);
+                var read;
+                while (((read = this.Read(buffer, 0, buffer.length))) !== 0) {
+                    destination.Write(buffer, 0, read);
+                }
+            },
+            Close: function () {
+                /* These are correct, but we'd have to fix PipeStream & NetworkStream very carefully.
+                Contract.Ensures(CanRead == false);
+                Contract.Ensures(CanWrite == false);
+                Contract.Ensures(CanSeek == false);
+                */
+
+                this.Dispose$1(true);
+            },
+            Dispose: function () {
+                /* These are correct, but we'd have to fix PipeStream & NetworkStream very carefully.
+                Contract.Ensures(CanRead == false);
+                Contract.Ensures(CanWrite == false);
+                Contract.Ensures(CanSeek == false);
+                */
+
+                this.Close();
+            },
+            Dispose$1: function (disposing) {
+                // Note: Never change this to call other virtual methods on Stream
+                // like Write, since the state on subclasses has already been
+                // torn down.  This is the last code to run on cleanup for a stream.
+            },
+            BeginRead: function (buffer, offset, count, callback, state) {
+                return this.BeginReadInternal(buffer, offset, count, callback, state, false);
+            },
+            BeginReadInternal: function (buffer, offset, count, callback, state, serializeAsynchronously) {
+                if (!this.CanRead) {
+                    System.IO.__Error.ReadNotSupported();
+                }
+
+                return this.BlockingBeginRead(buffer, offset, count, callback, state);
+            },
+            EndRead: function (asyncResult) {
+                if (asyncResult == null) {
+                    throw new System.ArgumentNullException("asyncResult");
+                }
+
+                return System.IO.Stream.BlockingEndRead(asyncResult);
+            },
+            BeginWrite: function (buffer, offset, count, callback, state) {
+                return this.BeginWriteInternal(buffer, offset, count, callback, state, false);
+            },
+            BeginWriteInternal: function (buffer, offset, count, callback, state, serializeAsynchronously) {
+                if (!this.CanWrite) {
+                    System.IO.__Error.WriteNotSupported();
+                }
+                return this.BlockingBeginWrite(buffer, offset, count, callback, state);
+            },
+            EndWrite: function (asyncResult) {
+                if (asyncResult == null) {
+                    throw new System.ArgumentNullException("asyncResult");
+                }
+
+                System.IO.Stream.BlockingEndWrite(asyncResult);
+            },
+            ReadByte: function () {
+
+                var oneByteArray = System.Array.init(1, 0, System.Byte);
+                var r = this.Read(oneByteArray, 0, 1);
+                if (r === 0) {
+                    return -1;
+                }
+                return oneByteArray[System.Array.index(0, oneByteArray)];
+            },
+            WriteByte: function (value) {
+                var oneByteArray = System.Array.init(1, 0, System.Byte);
+                oneByteArray[System.Array.index(0, oneByteArray)] = value;
+                this.Write(oneByteArray, 0, 1);
+            },
+            BlockingBeginRead: function (buffer, offset, count, callback, state) {
+
+                // To avoid a race with a stream's position pointer & generating ----
+                // conditions with internal buffer indexes in our own streams that
+                // don't natively support async IO operations when there are multiple
+                // async requests outstanding, we will block the application's main
+                // thread and do the IO synchronously.
+                // This can't perform well - use a different approach.
+                var asyncResult;
+                try {
+                    var numRead = this.Read(buffer, offset, count);
+                    asyncResult = new System.IO.Stream.SynchronousAsyncResult.$ctor1(numRead, state);
+                }
+                catch ($e1) {
+                    $e1 = System.Exception.create($e1);
+                    var ex;
+                    if (Bridge.is($e1, System.IO.IOException)) {
+                        ex = $e1;
+                        asyncResult = new System.IO.Stream.SynchronousAsyncResult.ctor(ex, state, false);
+                    } else {
+                        throw $e1;
+                    }
+                }
+
+                if (!Bridge.staticEquals(callback, null)) {
+                    callback(asyncResult);
+                }
+
+                return asyncResult;
+            },
+            BlockingBeginWrite: function (buffer, offset, count, callback, state) {
+
+                // To avoid a race with a stream's position pointer & generating ----
+                // conditions with internal buffer indexes in our own streams that
+                // don't natively support async IO operations when there are multiple
+                // async requests outstanding, we will block the application's main
+                // thread and do the IO synchronously.
+                // This can't perform well - use a different approach.
+                var asyncResult;
+                try {
+                    this.Write(buffer, offset, count);
+                    asyncResult = new System.IO.Stream.SynchronousAsyncResult.$ctor2(state);
+                }
+                catch ($e1) {
+                    $e1 = System.Exception.create($e1);
+                    var ex;
+                    if (Bridge.is($e1, System.IO.IOException)) {
+                        ex = $e1;
+                        asyncResult = new System.IO.Stream.SynchronousAsyncResult.ctor(ex, state, true);
+                    } else {
+                        throw $e1;
+                    }
+                }
+
+                if (!Bridge.staticEquals(callback, null)) {
+                    callback(asyncResult);
+                }
+
+                return asyncResult;
+            }
+        }
+    });
+
+    Bridge.define("System.IO.IOException", {
+        inherits: [System.Exception],
+        fields: {
+            _maybeFullPath: null
+        },
+        ctors: {
+            ctor: function () {
+                this.$initialize();
+                System.Exception.ctor.call(this, "Arg_IOException");
+            },
+            $ctor1: function (message) {
+                this.$initialize();
+                System.Exception.ctor.call(this, message);
+            },
+            $ctor3: function (message, hresult) {
+                this.$initialize();
+                System.Exception.ctor.call(this, message);
+            },
+            $ctor4: function (message, hresult, maybeFullPath) {
+                this.$initialize();
+                System.Exception.ctor.call(this, message);
+                this._maybeFullPath = maybeFullPath;
+            },
+            $ctor2: function (message, innerException) {
+                this.$initialize();
+                System.Exception.ctor.call(this, message, innerException);
+            }
+        }
+    });
+
+    Bridge.define("System.IO.File", {
+        statics: {
+            methods: {
+                OpenText: function (path) {
+                    if (path == null) {
+                        throw new System.ArgumentNullException("path");
+                    }
+                    return new System.IO.StreamReader.$ctor7(path);
+                },
+                OpenRead: function (path) {
+                    return new System.IO.FileStream.$ctor1(path, System.IO.FileMode.Open);
+                },
+                ReadAllText: function (path) {
+                    if (path == null) {
+                        throw new System.ArgumentNullException("path");
+                    }
+                    if (path.length === 0) {
+                        throw new System.ArgumentException("Argument_EmptyPath");
+                    }
+
+                    return System.IO.File.InternalReadAllText(path, System.Text.Encoding.UTF8, true);
+                },
+                ReadAllText$1: function (path, encoding) {
+                    if (path == null) {
+                        throw new System.ArgumentNullException("path");
+                    }
+                    if (encoding == null) {
+                        throw new System.ArgumentNullException("encoding");
+                    }
+                    if (path.length === 0) {
+                        throw new System.ArgumentException("Argument_EmptyPath");
+                    }
+
+                    return System.IO.File.InternalReadAllText(path, encoding, true);
+                },
+                InternalReadAllText: function (path, encoding, checkHost) {
+
+                    var sr = new System.IO.StreamReader.$ctor12(path, encoding, true, System.IO.StreamReader.DefaultBufferSize, checkHost);
+                    try {
+                        return sr.ReadToEnd();
+                    }
+                    finally {
+                        if (Bridge.hasValue(sr)) {
+                            sr.System$IDisposable$dispose();
+                        }
+                    }
+                },
+                ReadAllBytes: function (path) {
+                    return System.IO.File.InternalReadAllBytes(path, true);
+                },
+                InternalReadAllBytes: function (path, checkHost) {
+                    var bytes;
+                    var fs = new System.IO.FileStream.$ctor1(path, System.IO.FileMode.Open);
+                    try {
+                        // Do a blocking read
+                        var index = 0;
+                        var fileLength = fs.Length;
+                        if (fileLength.gt(System.Int64(2147483647))) {
+                            throw new System.IO.IOException.$ctor1("IO.IO_FileTooLong2GB");
+                        }
+                        var count = System.Int64.clip32(fileLength);
+                        bytes = System.Array.init(count, 0, System.Byte);
+                        while (count > 0) {
+                            var n = fs.Read(bytes, index, count);
+                            if (n === 0) {
+                                System.IO.__Error.EndOfFile();
+                            }
+                            index = (index + n) | 0;
+                            count = (count - n) | 0;
+                        }
+                    }
+                    finally {
+                        if (Bridge.hasValue(fs)) {
+                            fs.System$IDisposable$dispose();
+                        }
+                    }
+                    return bytes;
+                },
+                ReadAllLines: function (path) {
+                    if (path == null) {
+                        throw new System.ArgumentNullException("path");
+                    }
+                    if (path.length === 0) {
+                        throw new System.ArgumentException("Argument_EmptyPath");
+                    }
+
+                    return System.IO.File.InternalReadAllLines(path, System.Text.Encoding.UTF8);
+                },
+                ReadAllLines$1: function (path, encoding) {
+                    if (path == null) {
+                        throw new System.ArgumentNullException("path");
+                    }
+                    if (encoding == null) {
+                        throw new System.ArgumentNullException("encoding");
+                    }
+                    if (path.length === 0) {
+                        throw new System.ArgumentException("Argument_EmptyPath");
+                    }
+
+                    return System.IO.File.InternalReadAllLines(path, encoding);
+                },
+                InternalReadAllLines: function (path, encoding) {
+
+                    var line;
+                    var lines = new (System.Collections.Generic.List$1(System.String)).ctor();
+
+                    var sr = new System.IO.StreamReader.$ctor9(path, encoding);
+                    try {
+                        while (((line = sr.ReadLine())) != null) {
+                            lines.add(line);
+                        }
+                    }
+                    finally {
+                        if (Bridge.hasValue(sr)) {
+                            sr.System$IDisposable$dispose();
+                        }
+                    }
+
+                    return lines.toArray();
+                },
+                ReadLines: function (path) {
+                    if (path == null) {
+                        throw new System.ArgumentNullException("path");
+                    }
+                    if (path.length === 0) {
+                        throw new System.ArgumentException("Argument_EmptyPath", "path");
+                    }
+
+                    return System.IO.ReadLinesIterator.CreateIterator(path, System.Text.Encoding.UTF8);
+                },
+                ReadLines$1: function (path, encoding) {
+                    if (path == null) {
+                        throw new System.ArgumentNullException("path");
+                    }
+                    if (encoding == null) {
+                        throw new System.ArgumentNullException("encoding");
+                    }
+                    if (path.length === 0) {
+                        throw new System.ArgumentException("Argument_EmptyPath", "path");
+                    }
+
+                    return System.IO.ReadLinesIterator.CreateIterator(path, encoding);
+                }
+            }
+        }
+    });
+
+    Bridge.define("System.IO.FileMode", {
+        $kind: "enum",
+        statics: {
+            fields: {
+                CreateNew: 1,
+                Create: 2,
+                Open: 3,
+                OpenOrCreate: 4,
+                Truncate: 5,
+                Append: 6
+            }
+        }
+    });
+
+    Bridge.define("System.IO.Iterator$1", function (TSource) { return {
+        inherits: [System.Collections.Generic.IEnumerable$1(TSource),System.Collections.Generic.IEnumerator$1(TSource)],
+        fields: {
+            state: 0,
+            current: Bridge.getDefaultValue(TSource)
+        },
+        props: {
+            Current: {
+                get: function () {
+                    return this.current;
+                }
+            },
+            System$Collections$IEnumerator$Current: {
+                get: function () {
+                    return this.Current;
+                }
+            }
+        },
+        alias: [
+            "Current", ["System$Collections$Generic$IEnumerator$1$" + Bridge.getTypeAlias(TSource) + "$Current$1", "System$Collections$Generic$IEnumerator$1$Current$1"],
+            "Dispose", "System$IDisposable$dispose",
+            "GetEnumerator", ["System$Collections$Generic$IEnumerable$1$" + Bridge.getTypeAlias(TSource) + "$getEnumerator", "System$Collections$Generic$IEnumerable$1$getEnumerator"]
+        ],
+        ctors: {
+            ctor: function () {
+                this.$initialize();
+            }
+        },
+        methods: {
+            Dispose: function () {
+                this.Dispose$1(true);
+            },
+            Dispose$1: function (disposing) {
+                this.current = Bridge.getDefaultValue(TSource);
+                this.state = -1;
+            },
+            GetEnumerator: function () {
+                if (this.state === 0) {
+                    this.state = 1;
+                    return this;
+                }
+
+                var duplicate = this.Clone();
+                duplicate.state = 1;
+                return duplicate;
+            },
+            System$Collections$IEnumerable$getEnumerator: function () {
+                return this.GetEnumerator();
+            },
+            System$Collections$IEnumerator$reset: function () {
+                throw new System.NotSupportedException();
+            }
+        }
+    }; });
+
+    Bridge.define("System.IO.SeekOrigin", {
+        $kind: "enum",
+        statics: {
+            fields: {
+                Begin: 0,
+                Current: 1,
+                End: 2
+            }
+        }
+    });
+
+    Bridge.define("System.IO.Stream.SynchronousAsyncResult", {
+        inherits: [System.IAsyncResult],
+        statics: {
+            methods: {
+                EndRead: function (asyncResult) {
+
+                    var ar = Bridge.as(asyncResult, System.IO.Stream.SynchronousAsyncResult);
+                    if (ar == null || ar._isWrite) {
+                        System.IO.__Error.WrongAsyncResult();
+                    }
+
+                    if (ar._endXxxCalled) {
+                        System.IO.__Error.EndReadCalledTwice();
+                    }
+
+                    ar._endXxxCalled = true;
+
+                    ar.ThrowIfError();
+                    return ar._bytesRead;
+                },
+                EndWrite: function (asyncResult) {
+
+                    var ar = Bridge.as(asyncResult, System.IO.Stream.SynchronousAsyncResult);
+                    if (ar == null || !ar._isWrite) {
+                        System.IO.__Error.WrongAsyncResult();
+                    }
+
+                    if (ar._endXxxCalled) {
+                        System.IO.__Error.EndWriteCalledTwice();
+                    }
+
+                    ar._endXxxCalled = true;
+
+                    ar.ThrowIfError();
+                }
+            }
+        },
+        fields: {
+            _stateObject: null,
+            _isWrite: false,
+            _exceptionInfo: null,
+            _endXxxCalled: false,
+            _bytesRead: 0
+        },
+        props: {
+            IsCompleted: {
+                get: function () {
+                    return true;
+                }
+            },
+            AsyncState: {
+                get: function () {
+                    return this._stateObject;
+                }
+            },
+            CompletedSynchronously: {
+                get: function () {
+                    return true;
+                }
+            }
+        },
+        alias: [
+            "IsCompleted", "System$IAsyncResult$IsCompleted",
+            "AsyncState", "System$IAsyncResult$AsyncState",
+            "CompletedSynchronously", "System$IAsyncResult$CompletedSynchronously"
+        ],
+        ctors: {
+            $ctor1: function (bytesRead, asyncStateObject) {
+                this.$initialize();
+                this._bytesRead = bytesRead;
+                this._stateObject = asyncStateObject;
+                //_isWrite = false;
+            },
+            $ctor2: function (asyncStateObject) {
+                this.$initialize();
+                this._stateObject = asyncStateObject;
+                this._isWrite = true;
+            },
+            ctor: function (ex, asyncStateObject, isWrite) {
+                this.$initialize();
+                this._exceptionInfo = ex;
+                this._stateObject = asyncStateObject;
+                this._isWrite = isWrite;
+            }
+        },
+        methods: {
+            ThrowIfError: function () {
+                if (this._exceptionInfo != null) {
+                    throw this._exceptionInfo;
+                }
+            }
+        }
+    });
+
+    Bridge.define("System.IO.TextReader", {
+        inherits: [System.IDisposable],
+        statics: {
+            fields: {
+                Null: null
+            },
+            ctors: {
+                init: function () {
+                    this.Null = new System.IO.TextReader.NullTextReader();
+                }
+            },
+            methods: {
+                Synchronized: function (reader) {
+                    if (reader == null) {
+                        throw new System.ArgumentNullException("reader");
+                    }
+
+                    return reader;
+                }
+            }
+        },
+        alias: ["Dispose", "System$IDisposable$dispose"],
+        ctors: {
+            ctor: function () {
+                this.$initialize();
+            }
+        },
+        methods: {
+            Close: function () {
+                this.Dispose$1(true);
+            },
+            Dispose: function () {
+                this.Dispose$1(true);
+            },
+            Dispose$1: function (disposing) { },
+            Peek: function () {
+
+                return -1;
+            },
+            Read: function () {
+                return -1;
+            },
+            Read$1: function (buffer, index, count) {
+                if (buffer == null) {
+                    throw new System.ArgumentNullException("buffer");
+                }
+                if (index < 0) {
+                    throw new System.ArgumentOutOfRangeException("index");
+                }
+                if (count < 0) {
+                    throw new System.ArgumentOutOfRangeException("count");
+                }
+                if (((buffer.length - index) | 0) < count) {
+                    throw new System.ArgumentException();
+                }
+
+                var n = 0;
+                do {
+                    var ch = this.Read();
+                    if (ch === -1) {
+                        break;
+                    }
+                    buffer[System.Array.index(((index + Bridge.identity(n, (n = (n + 1) | 0))) | 0), buffer)] = ch & 65535;
+                } while (n < count);
+                return n;
+            },
+            ReadToEndAsync: function () {
+                return System.Threading.Tasks.Task.fromResult(this.ReadToEnd());
+            },
+            ReadToEnd: function () {
+
+                var chars = System.Array.init(4096, 0, System.Char);
+                var len;
+                var sb = new System.Text.StringBuilder("", 4096);
+                while (((len = this.Read$1(chars, 0, chars.length))) !== 0) {
+                    sb.append(System.String.fromCharArray(chars, 0, len));
+                }
+                return sb.toString();
+            },
+            ReadBlock: function (buffer, index, count) {
+
+                var i, n = 0;
+                do {
+                    n = (n + ((i = this.Read$1(buffer, ((index + n) | 0), ((count - n) | 0))))) | 0;
+                } while (i > 0 && n < count);
+                return n;
+            },
+            ReadLine: function () {
+                var sb = new System.Text.StringBuilder();
+                while (true) {
+                    var ch = this.Read();
+                    if (ch === -1) {
+                        break;
+                    }
+                    if (ch === 13 || ch === 10) {
+                        if (ch === 13 && this.Peek() === 10) {
+                            this.Read();
+                        }
+                        return sb.toString();
+                    }
+                    sb.append(String.fromCharCode((ch & 65535)));
+                }
+                if (sb.getLength() > 0) {
+                    return sb.toString();
+                }
+                return null;
+            }
+        }
+    });
+
+    Bridge.define("System.IO.TextWriter", {
+        inherits: [System.IDisposable],
+        statics: {
+            fields: {
+                Null: null,
+                InitialNewLine: null
+            },
+            ctors: {
+                init: function () {
+                    this.Null = new System.IO.TextWriter.NullTextWriter();
+                    this.InitialNewLine = "\r\n";
+                }
+            },
+            methods: {
+                Synchronized: function (writer) {
+                    if (writer == null) {
+                        throw new System.ArgumentNullException("writer");
+                    }
+
+                    return writer;
+                }
+            }
+        },
+        fields: {
+            CoreNewLine: null,
+            InternalFormatProvider: null
+        },
+        props: {
+            FormatProvider: {
+                get: function () {
+                    if (this.InternalFormatProvider == null) {
+                        return System.Globalization.CultureInfo.getCurrentCulture();
+                    } else {
+                        return this.InternalFormatProvider;
+                    }
+                }
+            },
+            NewLine: {
+                get: function () {
+                    return System.String.fromCharArray(this.CoreNewLine);
+                },
+                set: function (value) {
+                    if (value == null) {
+                        value = System.IO.TextWriter.InitialNewLine;
+                    }
+                    this.CoreNewLine = System.String.toCharArray(value, 0, value.length);
+                }
+            }
+        },
+        alias: ["Dispose", "System$IDisposable$dispose"],
+        ctors: {
+            init: function () {
+                this.CoreNewLine = System.Array.init([13, 10], System.Char);
+            },
+            ctor: function () {
+                this.$initialize();
+                this.InternalFormatProvider = null; // Ask for CurrentCulture all the time.
+            },
+            $ctor1: function (formatProvider) {
+                this.$initialize();
+                this.InternalFormatProvider = formatProvider;
+            }
+        },
+        methods: {
+            Close: function () {
+                this.Dispose$1(true);
+            },
+            Dispose$1: function (disposing) { },
+            Dispose: function () {
+                this.Dispose$1(true);
+            },
+            Flush: function () { },
+            Write$1: function (value) { },
+            Write$2: function (buffer) {
+                if (buffer != null) {
+                    this.Write$3(buffer, 0, buffer.length);
+                }
+            },
+            Write$3: function (buffer, index, count) {
+                if (buffer == null) {
+                    throw new System.ArgumentNullException("buffer");
+                }
+                if (index < 0) {
+                    throw new System.ArgumentOutOfRangeException("index");
+                }
+                if (count < 0) {
+                    throw new System.ArgumentOutOfRangeException("count");
+                }
+                if (((buffer.length - index) | 0) < count) {
+                    throw new System.ArgumentException();
+                }
+
+                for (var i = 0; i < count; i = (i + 1) | 0) {
+                    this.Write$1(buffer[System.Array.index(((index + i) | 0), buffer)]);
+                }
+            },
+            Write: function (value) {
+                this.Write$10(value ? System.Boolean.trueString : System.Boolean.falseString);
+            },
+            Write$6: function (value) {
+                this.Write$10(System.Int32.format(value, "G", this.FormatProvider));
+            },
+            Write$15: function (value) {
+                this.Write$10(System.UInt32.format(value, "G", this.FormatProvider));
+            },
+            Write$7: function (value) {
+                this.Write$10(value.format("G", this.FormatProvider));
+            },
+            Write$16: function (value) {
+                this.Write$10(value.format("G", this.FormatProvider));
+            },
+            Write$9: function (value) {
+                this.Write$10(System.Single.format(value, "G", this.FormatProvider));
+            },
+            Write$5: function (value) {
+                this.Write$10(System.Double.format(value, "G", this.FormatProvider));
+            },
+            Write$4: function (value) {
+                this.Write$10(Bridge.Int.format(value, "G", this.FormatProvider));
+            },
+            Write$10: function (value) {
+                if (value != null) {
+                    this.Write$2(System.String.toCharArray(value, 0, value.length));
+                }
+            },
+            Write$8: function (value) {
+                if (value != null) {
+                    var f = Bridge.as(value, System.IFormattable);
+                    if (f != null) {
+                        this.Write$10(Bridge.format(f, null, this.FormatProvider));
+                    } else {
+                        this.Write$10(value.toString());
+                    }
+                }
+            },
+            Write$11: function (format, arg0) {
+                this.Write$10(System.String.formatProvider(this.FormatProvider, format, [arg0]));
+            },
+            Write$12: function (format, arg0, arg1) {
+                this.Write$10(System.String.formatProvider(this.FormatProvider, format, arg0, arg1));
+            },
+            Write$13: function (format, arg0, arg1, arg2) {
+                this.Write$10(System.String.formatProvider(this.FormatProvider, format, arg0, arg1, arg2));
+            },
+            Write$14: function (format, arg) {
+                if (arg === void 0) { arg = []; }
+                this.Write$10(System.String.formatProvider.apply(System.String, [this.FormatProvider, format].concat(arg)));
+            },
+            WriteLine: function () {
+                this.Write$2(this.CoreNewLine);
+            },
+            WriteLine$2: function (value) {
+                this.Write$1(value);
+                this.WriteLine();
+            },
+            WriteLine$3: function (buffer) {
+                this.Write$2(buffer);
+                this.WriteLine();
+            },
+            WriteLine$4: function (buffer, index, count) {
+                this.Write$3(buffer, index, count);
+                this.WriteLine();
+            },
+            WriteLine$1: function (value) {
+                this.Write(value);
+                this.WriteLine();
+            },
+            WriteLine$7: function (value) {
+                this.Write$6(value);
+                this.WriteLine();
+            },
+            WriteLine$16: function (value) {
+                this.Write$15(value);
+                this.WriteLine();
+            },
+            WriteLine$8: function (value) {
+                this.Write$7(value);
+                this.WriteLine();
+            },
+            WriteLine$17: function (value) {
+                this.Write$16(value);
+                this.WriteLine();
+            },
+            WriteLine$10: function (value) {
+                this.Write$9(value);
+                this.WriteLine();
+            },
+            WriteLine$6: function (value) {
+                this.Write$5(value);
+                this.WriteLine();
+            },
+            WriteLine$5: function (value) {
+                this.Write$4(value);
+                this.WriteLine();
+            },
+            WriteLine$11: function (value) {
+
+                if (value == null) {
+                    this.WriteLine();
+                } else {
+                    // We'd ideally like WriteLine to be atomic, in that one call
+                    // to WriteLine equals one call to the OS (ie, so writing to
+                    // console while simultaneously calling printf will guarantee we
+                    // write out a string and new line chars, without any interference).
+                    // Additionally, we need to call ToCharArray on Strings anyways,
+                    // so allocating a char[] here isn't any worse than what we were
+                    // doing anyways.  We do reduce the number of calls to the
+                    // backing store this way, potentially.
+                    var vLen = value.length;
+                    var nlLen = this.CoreNewLine.length;
+                    var chars = System.Array.init(((vLen + nlLen) | 0), 0, System.Char);
+                    System.String.copyTo(value, 0, chars, 0, vLen);
+                    // CoreNewLine will almost always be 2 chars, and possibly 1.
+                    if (nlLen === 2) {
+                        chars[System.Array.index(vLen, chars)] = this.CoreNewLine[System.Array.index(0, this.CoreNewLine)];
+                        chars[System.Array.index(((vLen + 1) | 0), chars)] = this.CoreNewLine[System.Array.index(1, this.CoreNewLine)];
+                    } else if (nlLen === 1) {
+                        chars[System.Array.index(vLen, chars)] = this.CoreNewLine[System.Array.index(0, this.CoreNewLine)];
+                    } else {
+                        System.Array.copy(this.CoreNewLine, 0, chars, Bridge.Int.mul(vLen, 2), Bridge.Int.mul(nlLen, 2));
+                    }
+                    this.Write$3(chars, 0, ((vLen + nlLen) | 0));
+                }
+                /* 
+                Write(value);  // We could call Write(String) on StreamWriter...
+                WriteLine();
+                */
+            },
+            WriteLine$9: function (value) {
+                if (value == null) {
+                    this.WriteLine();
+                } else {
+                    // Call WriteLine(value.ToString), not Write(Object), WriteLine().
+                    // This makes calls to WriteLine(Object) atomic.
+                    var f = Bridge.as(value, System.IFormattable);
+                    if (f != null) {
+                        this.WriteLine$11(Bridge.format(f, null, this.FormatProvider));
+                    } else {
+                        this.WriteLine$11(value.toString());
+                    }
+                }
+            },
+            WriteLine$12: function (format, arg0) {
+                this.WriteLine$11(System.String.formatProvider(this.FormatProvider, format, [arg0]));
+            },
+            WriteLine$13: function (format, arg0, arg1) {
+                this.WriteLine$11(System.String.formatProvider(this.FormatProvider, format, arg0, arg1));
+            },
+            WriteLine$14: function (format, arg0, arg1, arg2) {
+                this.WriteLine$11(System.String.formatProvider(this.FormatProvider, format, arg0, arg1, arg2));
+            },
+            WriteLine$15: function (format, arg) {
+                if (arg === void 0) { arg = []; }
+                this.WriteLine$11(System.String.formatProvider.apply(System.String, [this.FormatProvider, format].concat(arg)));
+            }
+        }
+    });
+
+    Bridge.define("System.IO.BufferedStream", {
+        inherits: [System.IO.Stream],
+        statics: {
+            fields: {
+                _DefaultBufferSize: 0,
+                MaxShadowBufferSize: 0
+            },
+            ctors: {
+                init: function () {
+                    this._DefaultBufferSize = 4096;
+                    this.MaxShadowBufferSize = 81920;
+                }
+            }
+        },
+        fields: {
+            _stream: null,
+            _buffer: null,
+            _bufferSize: 0,
+            _readPos: 0,
+            _readLen: 0,
+            _writePos: 0
+        },
+        props: {
+            UnderlyingStream: {
+                get: function () {
+                    return this._stream;
+                }
+            },
+            BufferSize: {
+                get: function () {
+                    return this._bufferSize;
+                }
+            },
+            CanRead: {
+                get: function () {
+                    return this._stream != null && this._stream.CanRead;
+                }
+            },
+            CanWrite: {
+                get: function () {
+                    return this._stream != null && this._stream.CanWrite;
+                }
+            },
+            CanSeek: {
+                get: function () {
+                    return this._stream != null && this._stream.CanSeek;
+                }
+            },
+            Length: {
+                get: function () {
+                    this.EnsureNotClosed();
+
+                    if (this._writePos > 0) {
+                        this.FlushWrite();
+                    }
+
+                    return this._stream.Length;
+                }
+            },
+            Position: {
+                get: function () {
+                    this.EnsureNotClosed();
+                    this.EnsureCanSeek();
+
+                    return this._stream.Position.add(System.Int64((((((this._readPos - this._readLen) | 0) + this._writePos) | 0))));
+                },
+                set: function (value) {
+                    if (value.lt(System.Int64(0))) {
+                        throw new System.ArgumentOutOfRangeException("value");
+                    }
+
+                    this.EnsureNotClosed();
+                    this.EnsureCanSeek();
+
+                    if (this._writePos > 0) {
+                        this.FlushWrite();
+                    }
+
+                    this._readPos = 0;
+                    this._readLen = 0;
+                    this._stream.Seek(value, System.IO.SeekOrigin.Begin);
+                }
+            }
+        },
+        ctors: {
+            ctor: function () {
+                this.$initialize();
+                System.IO.Stream.ctor.call(this);
+            },
+            $ctor1: function (stream) {
+                System.IO.BufferedStream.$ctor2.call(this, stream, System.IO.BufferedStream._DefaultBufferSize);
+            },
+            $ctor2: function (stream, bufferSize) {
+                this.$initialize();
+                System.IO.Stream.ctor.call(this);
+
+                if (stream == null) {
+                    throw new System.ArgumentNullException("stream");
+                }
+
+                if (bufferSize <= 0) {
+                    throw new System.ArgumentOutOfRangeException("bufferSize");
+                }
+
+                this._stream = stream;
+                this._bufferSize = bufferSize;
+
+                // Allocate _buffer on its first use - it will not be used if all reads
+                // & writes are greater than or equal to buffer size.
+
+                if (!this._stream.CanRead && !this._stream.CanWrite) {
+                    System.IO.__Error.StreamIsClosed();
+                }
+            }
+        },
+        methods: {
+            EnsureNotClosed: function () {
+
+                if (this._stream == null) {
+                    System.IO.__Error.StreamIsClosed();
+                }
+            },
+            EnsureCanSeek: function () {
+
+
+                if (!this._stream.CanSeek) {
+                    System.IO.__Error.SeekNotSupported();
+                }
+            },
+            EnsureCanRead: function () {
+
+
+                if (!this._stream.CanRead) {
+                    System.IO.__Error.ReadNotSupported();
+                }
+            },
+            EnsureCanWrite: function () {
+
+
+                if (!this._stream.CanWrite) {
+                    System.IO.__Error.WriteNotSupported();
+                }
+            },
+            EnsureShadowBufferAllocated: function () {
+
+
+                // Already have shadow buffer?
+                if (this._buffer.length !== this._bufferSize || this._bufferSize >= System.IO.BufferedStream.MaxShadowBufferSize) {
+                    return;
+                }
+
+                var shadowBuffer = System.Array.init(Math.min(((this._bufferSize + this._bufferSize) | 0), System.IO.BufferedStream.MaxShadowBufferSize), 0, System.Byte);
+                System.Array.copy(this._buffer, 0, shadowBuffer, 0, this._writePos);
+                this._buffer = shadowBuffer;
+            },
+            EnsureBufferAllocated: function () {
+
+
+                // BufferedStream is not intended for multi-threaded use, so no worries about the get/set ---- on _buffer.
+                if (this._buffer == null) {
+                    this._buffer = System.Array.init(this._bufferSize, 0, System.Byte);
+                }
+            },
+            Dispose$1: function (disposing) {
+
+                try {
+                    if (disposing && this._stream != null) {
+                        try {
+                            this.Flush();
+                        }
+                        finally {
+                            this._stream.Close();
+                        }
+                    }
+                }
+                finally {
+                    this._stream = null;
+                    this._buffer = null;
+
+                    // Call base.Dispose(bool) to cleanup async IO resources
+                    System.IO.Stream.prototype.Dispose$1.call(this, disposing);
+                }
+            },
+            Flush: function () {
+
+                this.EnsureNotClosed();
+
+                // Has WRITE data in the buffer:
+                if (this._writePos > 0) {
+
+                    this.FlushWrite();
+                    return;
+                }
+
+                // Has READ data in the buffer:
+                if (this._readPos < this._readLen) {
+
+                    // If the underlying stream is not seekable AND we have something in the read buffer, then FlushRead would throw.
+                    // We can either throw away the buffer resulting in data loss (!) or ignore the Flush.
+                    // (We cannot throw becasue it would be a breaking change.) We opt into ignoring the Flush in that situation.
+                    if (!this._stream.CanSeek) {
+                        return;
+                    }
+
+                    this.FlushRead();
+
+                    // User streams may have opted to throw from Flush if CanWrite is false (although the abstract Stream does not do so).
+                    // However, if we do not forward the Flush to the underlying stream, we may have problems when chaining several streams.
+                    // Let us make a best effort attempt:
+                    if (this._stream.CanWrite || Bridge.is(this._stream, System.IO.BufferedStream)) {
+                        this._stream.Flush();
+                    }
+
+                    return;
+                }
+
+                // We had no data in the buffer, but we still need to tell the underlying stream to flush.
+                if (this._stream.CanWrite || Bridge.is(this._stream, System.IO.BufferedStream)) {
+                    this._stream.Flush();
+                }
+
+                this._writePos = (this._readPos = (this._readLen = 0));
+            },
+            FlushRead: function () {
+
+
+                if (((this._readPos - this._readLen) | 0) !== 0) {
+                    this._stream.Seek(System.Int64(this._readPos - this._readLen), System.IO.SeekOrigin.Current);
+                }
+
+                this._readPos = 0;
+                this._readLen = 0;
+            },
+            ClearReadBufferBeforeWrite: function () {
+
+                // This is called by write methods to clear the read buffer.
+
+
+                // No READ data in the buffer:
+                if (this._readPos === this._readLen) {
+
+                    this._readPos = (this._readLen = 0);
+                    return;
+                }
+
+                // Must have READ data.
+
+                // If the underlying stream cannot seek, FlushRead would end up throwing NotSupported.
+                // However, since the user did not call a method that is intuitively expected to seek, a better message is in order.
+                // Ideally, we would throw an InvalidOperation here, but for backward compat we have to stick with NotSupported.
+                if (!this._stream.CanSeek) {
+                    throw new System.NotSupportedException();
+                }
+
+                this.FlushRead();
+            },
+            FlushWrite: function () {
+
+
+                this._stream.Write(this._buffer, 0, this._writePos);
+                this._writePos = 0;
+                this._stream.Flush();
+            },
+            ReadFromBuffer: function (array, offset, count) {
+
+                var readBytes = (this._readLen - this._readPos) | 0;
+
+                if (readBytes === 0) {
+                    return 0;
+                }
+
+
+                if (readBytes > count) {
+                    readBytes = count;
+                }
+
+                System.Array.copy(this._buffer, this._readPos, array, offset, readBytes);
+                this._readPos = (this._readPos + readBytes) | 0;
+
+                return readBytes;
+            },
+            ReadFromBuffer$1: function (array, offset, count, error) {
+
+                try {
+
+                    error.v = null;
+                    return this.ReadFromBuffer(array, offset, count);
+
+                }
+                catch (ex) {
+                    ex = System.Exception.create(ex);
+                    error.v = ex;
+                    return 0;
+                }
+            },
+            Read: function (array, offset, count) {
+
+                if (array == null) {
+                    throw new System.ArgumentNullException("array");
+                }
+                if (offset < 0) {
+                    throw new System.ArgumentOutOfRangeException("offset");
+                }
+                if (count < 0) {
+                    throw new System.ArgumentOutOfRangeException("count");
+                }
+                if (((array.length - offset) | 0) < count) {
+                    throw new System.ArgumentException();
+                }
+
+                this.EnsureNotClosed();
+                this.EnsureCanRead();
+
+                var bytesFromBuffer = this.ReadFromBuffer(array, offset, count);
+
+                // We may have read less than the number of bytes the user asked for, but that is part of the Stream contract.
+
+                // Reading again for more data may cause us to block if we're using a device with no clear end of file,
+                // such as a serial port or pipe. If we blocked here and this code was used with redirected pipes for a
+                // process's standard output, this can lead to deadlocks involving two processes.
+                // BUT - this is a breaking change.
+                // So: If we could not read all bytes the user asked for from the buffer, we will try once from the underlying
+                // stream thus ensuring the same blocking behaviour as if the underlying stream was not wrapped in this BufferedStream.
+                if (bytesFromBuffer === count) {
+                    return bytesFromBuffer;
+                }
+
+                var alreadySatisfied = bytesFromBuffer;
+                if (bytesFromBuffer > 0) {
+                    count = (count - bytesFromBuffer) | 0;
+                    offset = (offset + bytesFromBuffer) | 0;
+                }
+
+                // So the READ buffer is empty.
+                this._readPos = (this._readLen = 0);
+
+                // If there was anything in the WRITE buffer, clear it.
+                if (this._writePos > 0) {
+                    this.FlushWrite();
+                }
+
+                // If the requested read is larger than buffer size, avoid the buffer and still use a single read:
+                if (count >= this._bufferSize) {
+
+                    return ((this._stream.Read(array, offset, count) + alreadySatisfied) | 0);
+                }
+
+                // Ok. We can fill the buffer:
+                this.EnsureBufferAllocated();
+                this._readLen = this._stream.Read(this._buffer, 0, this._bufferSize);
+
+                bytesFromBuffer = this.ReadFromBuffer(array, offset, count);
+
+                // We may have read less than the number of bytes the user asked for, but that is part of the Stream contract.
+                // Reading again for more data may cause us to block if we're using a device with no clear end of stream,
+                // such as a serial port or pipe.  If we blocked here & this code was used with redirected pipes for a process's
+                // standard output, this can lead to deadlocks involving two processes. Additionally, translating one read on the
+                // BufferedStream to more than one read on the underlying Stream may defeat the whole purpose of buffering of the
+                // underlying reads are significantly more expensive.
+
+                return ((bytesFromBuffer + alreadySatisfied) | 0);
+            },
+            ReadByte: function () {
+
+                this.EnsureNotClosed();
+                this.EnsureCanRead();
+
+                if (this._readPos === this._readLen) {
+
+                    if (this._writePos > 0) {
+                        this.FlushWrite();
+                    }
+
+                    this.EnsureBufferAllocated();
+                    this._readLen = this._stream.Read(this._buffer, 0, this._bufferSize);
+                    this._readPos = 0;
+                }
+
+                if (this._readPos === this._readLen) {
+                    return -1;
+                }
+
+                var b = this._buffer[System.Array.index(Bridge.identity(this._readPos, (this._readPos = (this._readPos + 1) | 0)), this._buffer)];
+                return b;
+            },
+            WriteToBuffer: function (array, offset, count) {
+
+                var bytesToWrite = Math.min(((this._bufferSize - this._writePos) | 0), count.v);
+
+                if (bytesToWrite <= 0) {
+                    return;
+                }
+
+                this.EnsureBufferAllocated();
+                System.Array.copy(array, offset.v, this._buffer, this._writePos, bytesToWrite);
+
+                this._writePos = (this._writePos + bytesToWrite) | 0;
+                count.v = (count.v - bytesToWrite) | 0;
+                offset.v = (offset.v + bytesToWrite) | 0;
+            },
+            WriteToBuffer$1: function (array, offset, count, error) {
+
+                try {
+
+                    error.v = null;
+                    this.WriteToBuffer(array, offset, count);
+
+                }
+                catch (ex) {
+                    ex = System.Exception.create(ex);
+                    error.v = ex;
+                }
+            },
+            Write: function (array, offset, count) {
+                offset = {v:offset};
+                count = {v:count};
+
+                if (array == null) {
+                    throw new System.ArgumentNullException("array");
+                }
+                if (offset.v < 0) {
+                    throw new System.ArgumentOutOfRangeException("offset");
+                }
+                if (count.v < 0) {
+                    throw new System.ArgumentOutOfRangeException("count");
+                }
+                if (((array.length - offset.v) | 0) < count.v) {
+                    throw new System.ArgumentException();
+                }
+
+                this.EnsureNotClosed();
+                this.EnsureCanWrite();
+
+                if (this._writePos === 0) {
+                    this.ClearReadBufferBeforeWrite();
+                }
+
+                // We need to use the buffer, while avoiding unnecessary buffer usage / memory copies.
+                // We ASSUME that memory copies are much cheaper than writes to the underlying stream, so if an extra copy is
+                // guaranteed to reduce the number of writes, we prefer it.
+                // We pick a simple strategy that makes degenerate cases rare if our assumptions are right.
+                //
+                // For ever write, we use a simple heuristic (below) to decide whether to use the buffer.
+                // The heuristic has the desirable property (*) that if the specified user data can fit into the currently available
+                // buffer space without filling it up completely, the heuristic will always tell us to use the buffer. It will also
+                // tell us to use the buffer in cases where the current write would fill the buffer, but the remaining data is small
+                // enough such that subsequent operations can use the buffer again.
+                //
+                // Algorithm:
+                // Determine whether or not to buffer according to the heuristic (below).
+                // If we decided to use the buffer:
+                //     Copy as much user data as we can into the buffer.
+                //     If we consumed all data: We are finished.
+                //     Otherwise, write the buffer out.
+                //     Copy the rest of user data into the now cleared buffer (no need to write out the buffer again as the heuristic
+                //     will prevent it from being filled twice).
+                // If we decided not to use the buffer:
+                //     Can the data already in the buffer and current user data be combines to a single write
+                //     by allocating a "shadow" buffer of up to twice the size of _bufferSize (up to a limit to avoid LOH)?
+                //     Yes, it can:
+                //         Allocate a larger "shadow" buffer and ensure the buffered  data is moved there.
+                //         Copy user data to the shadow buffer.
+                //         Write shadow buffer to the underlying stream in a single operation.
+                //     No, it cannot (amount of data is still too large):
+                //         Write out any data possibly in the buffer.
+                //         Write out user data directly.
+                //
+                // Heuristic:
+                // If the subsequent write operation that follows the current write operation will result in a write to the
+                // underlying stream in case that we use the buffer in the current write, while it would not have if we avoided
+                // using the buffer in the current write (by writing current user data to the underlying stream directly), then we
+                // prefer to avoid using the buffer since the corresponding memory copy is wasted (it will not reduce the number
+                // of writes to the underlying stream, which is what we are optimising for).
+                // ASSUME that the next write will be for the same amount of bytes as the current write (most common case) and
+                // determine if it will cause a write to the underlying stream. If the next write is actually larger, our heuristic
+                // still yields the right behaviour, if the next write is actually smaller, we may making an unnecessary write to
+                // the underlying stream. However, this can only occur if the current write is larger than half the buffer size and
+                // we will recover after one iteration.
+                // We have:
+                //     useBuffer = (_writePos + count + count < _bufferSize + _bufferSize)
+                //
+                // Example with _bufferSize = 20, _writePos = 6, count = 10:
+                //
+                //     +---------------------------------------+---------------------------------------+
+                //     |             current buffer            | next iteration's "future" buffer      |
+                //     +---------------------------------------+---------------------------------------+
+                //     |0| | | | | | | | | |1| | | | | | | | | |2| | | | | | | | | |3| | | | | | | | | |
+                //     |0|1|2|3|4|5|6|7|8|9|0|1|2|3|4|5|6|7|8|9|0|1|2|3|4|5|6|7|8|9|0|1|2|3|4|5|6|7|8|9|
+                //     +-----------+-------------------+-------------------+---------------------------+
+                //     | _writePos |  current count    | assumed next count|avail buff after next write|
+                //     +-----------+-------------------+-------------------+---------------------------+
+                //
+                // A nice property (*) of this heuristic is that it will always succeed if the user data completely fits into the
+                // available buffer, i.e. if count < (_bufferSize - _writePos).
+
+
+                var totalUserBytes;
+                var useBuffer; // We do not expect buffer sizes big enough for an overflow, but if it happens, lets fail early:
+                totalUserBytes = Bridge.Int.check(this._writePos + count.v, System.Int32);
+                useBuffer = (Bridge.Int.check(totalUserBytes + count.v, System.Int32) < (Bridge.Int.check(this._bufferSize + this._bufferSize, System.Int32)));
+
+                if (useBuffer) {
+
+                    this.WriteToBuffer(array, offset, count);
+
+                    if (this._writePos < this._bufferSize) {
+
+                        return;
+                    }
+
+
+                    this._stream.Write(this._buffer, 0, this._writePos);
+                    this._writePos = 0;
+
+                    this.WriteToBuffer(array, offset, count);
+
+
+                } else { // if (!useBuffer)
+
+                    // Write out the buffer if necessary.
+                    if (this._writePos > 0) {
+
+
+                        // Try avoiding extra write to underlying stream by combining previously buffered data with current user data:
+                        if (totalUserBytes <= (((this._bufferSize + this._bufferSize) | 0)) && totalUserBytes <= System.IO.BufferedStream.MaxShadowBufferSize) {
+
+                            this.EnsureShadowBufferAllocated();
+                            System.Array.copy(array, offset.v, this._buffer, this._writePos, count.v);
+                            this._stream.Write(this._buffer, 0, totalUserBytes);
+                            this._writePos = 0;
+                            return;
+                        }
+
+                        this._stream.Write(this._buffer, 0, this._writePos);
+                        this._writePos = 0;
+                    }
+
+                    // Write out user data.
+                    this._stream.Write(array, offset.v, count.v);
+                }
+            },
+            WriteByte: function (value) {
+
+                this.EnsureNotClosed();
+
+                if (this._writePos === 0) {
+
+                    this.EnsureCanWrite();
+                    this.ClearReadBufferBeforeWrite();
+                    this.EnsureBufferAllocated();
+                }
+
+                // We should not be flushing here, but only writing to the underlying stream, but previous version flushed, so we keep this.
+                if (this._writePos >= ((this._bufferSize - 1) | 0)) {
+                    this.FlushWrite();
+                }
+
+                this._buffer[System.Array.index(Bridge.identity(this._writePos, (this._writePos = (this._writePos + 1) | 0)), this._buffer)] = value;
+
+            },
+            Seek: function (offset, origin) {
+
+                this.EnsureNotClosed();
+                this.EnsureCanSeek();
+
+                // If we have bytes in the WRITE buffer, flush them out, seek and be done.
+                if (this._writePos > 0) {
+
+                    // We should be only writing the buffer and not flushing,
+                    // but the previous version did flush and we stick to it for back-compat reasons.
+                    this.FlushWrite();
+                    return this._stream.Seek(offset, origin);
+                }
+
+                // The buffer is either empty or we have a buffered READ.
+
+                if (((this._readLen - this._readPos) | 0) > 0 && origin === System.IO.SeekOrigin.Current) {
+
+                    // If we have bytes in the READ buffer, adjust the seek offset to account for the resulting difference
+                    // between this stream's position and the underlying stream's position.
+                    offset = offset.sub(System.Int64((((this._readLen - this._readPos) | 0))));
+                }
+
+                var oldPos = this.Position;
+
+                var newPos = this._stream.Seek(offset, origin);
+
+                // If the seek destination is still within the data currently in the buffer, we want to keep the buffer data and continue using it.
+                // Otherwise we will throw away the buffer. This can only happen on READ, as we flushed WRITE data above.
+
+                // The offset of the new/updated seek pointer within _buffer:
+                this._readPos = System.Int64.clip32(newPos.sub((oldPos.sub(System.Int64(this._readPos)))));
+
+                // If the offset of the updated seek pointer in the buffer is still legal, then we can keep using the buffer:
+                if (0 <= this._readPos && this._readPos < this._readLen) {
+
+                    // Adjust the seek pointer of the underlying stream to reflect the amount of useful bytes in the read buffer:
+                    this._stream.Seek(System.Int64(this._readLen - this._readPos), System.IO.SeekOrigin.Current);
+
+                } else { // The offset of the updated seek pointer is not a legal offset. Loose the buffer.
+
+                    this._readPos = (this._readLen = 0);
+                }
+
+                return newPos;
+            },
+            SetLength: function (value) {
+
+                if (value.lt(System.Int64(0))) {
+                    throw new System.ArgumentOutOfRangeException("value");
+                }
+
+                this.EnsureNotClosed();
+                this.EnsureCanSeek();
+                this.EnsureCanWrite();
+
+                this.Flush();
+                this._stream.SetLength(value);
+            }
+        }
+    });
+
+    Bridge.define("System.IO.EndOfStreamException", {
+        inherits: [System.IO.IOException],
+        ctors: {
+            ctor: function () {
+                this.$initialize();
+                System.IO.IOException.$ctor1.call(this, "Arg_EndOfStreamException");
+            },
+            $ctor1: function (message) {
+                this.$initialize();
+                System.IO.IOException.$ctor1.call(this, message);
+            },
+            $ctor2: function (message, innerException) {
+                this.$initialize();
+                System.IO.IOException.$ctor2.call(this, message, innerException);
+            }
+        }
+    });
+
+    Bridge.define("System.IO.FileStream", {
+        inherits: [System.IO.Stream],
+        statics: {
+            methods: {
+                FromFile: function (file) {
+                    var completer = new System.Threading.Tasks.TaskCompletionSource();
+                    var fileReader = new FileReader();
+                    fileReader.onload = function () {
+                        completer.setResult(new System.IO.FileStream.ctor(fileReader.result, file.name));
+                    };
+                    fileReader.onerror = function (e) {
+                        completer.setException(new Bridge.ErrorException(Bridge.unbox(e).target.error.As()));
+                    };
+                    fileReader.readAsArrayBuffer(file);
+
+                    return completer.task;
+                },
+                ReadBytes: function (path) {
+                    if (Bridge.isNode) {
+                        var fs = require("fs");
+                        return Bridge.cast(fs.readFileSync(path), ArrayBuffer);
+                    } else {
+                        var req = new XMLHttpRequest();
+                        req.open("GET", path, false);
+                        req.overrideMimeType("text/plain; charset=binary-data");
+                        req.send(null);
+                        if (req.status !== 200) {
+                            throw new System.IO.IOException.$ctor1(System.String.format("Status of request to {0} returned status: {1}", path, Bridge.box(req.status, System.UInt16)));
+                        }
+                        var text = req.responseText;
+                        var resultArray = new Uint8Array(text.length);
+                        System.String.toCharArray(text, 0, text.length).forEach(function (v, index, array) {
+                                var $t;
+                                return ($t = (v & 255) & 255, resultArray[index] = $t, $t);
+                            });
+                        return resultArray.buffer;
+                    }
+                },
+                ReadBytesAsync: function (path) {
+                    var tcs = new System.Threading.Tasks.TaskCompletionSource();
+
+                    if (Bridge.isNode) {
+                        var fs = require("fs");
+                        fs.readFile(path, function (err, data) {
+                            if (err != null) {
+                                throw new System.IO.IOException.ctor();
+                            }
+
+                            tcs.setResult(data);
+                        });
+                    } else {
+                        var req = new XMLHttpRequest();
+                        req.open("GET", path, true);
+                        req.overrideMimeType("text/plain; charset=binary-data");
+                        req.send(null);
+
+                        req.onreadystatechange = function () {
+                            if (req.readyState !== 4) {
+                                return;
+                            }
+
+                            if (req.status !== 200) {
+                                throw new System.IO.IOException.$ctor1(System.String.format("Status of request to {0} returned status: {1}", path, Bridge.box(req.status, System.UInt16)));
+                            }
+
+                            var text = req.responseText;
+                            var resultArray = new Uint8Array(text.length);
+                            System.String.toCharArray(text, 0, text.length).forEach(function (v, index, array) {
+                                    var $t;
+                                    return ($t = (v & 255) & 255, resultArray[index] = $t, $t);
+                                });
+                            tcs.setResult(resultArray.buffer);
+                        };
+                    }
+
+                    return tcs.task;
+                }
+            }
+        },
+        fields: {
+            name: null,
+            _buffer: null
+        },
+        props: {
+            CanRead: {
+                get: function () {
+                    return true;
+                }
+            },
+            CanWrite: {
+                get: function () {
+                    return false;
+                }
+            },
+            CanSeek: {
+                get: function () {
+                    return false;
+                }
+            },
+            IsAsync: {
+                get: function () {
+                    return false;
+                }
+            },
+            Name: {
+                get: function () {
+                    return this.name;
+                }
+            },
+            Length: {
+                get: function () {
+                    return System.Int64(this.GetInternalBuffer().byteLength);
+                }
+            },
+            Position: System.Int64(0)
+        },
+        ctors: {
+            $ctor1: function (path, mode) {
+                this.$initialize();
+                System.IO.Stream.ctor.call(this);
+                this.name = path;
+            },
+            ctor: function (buffer, name) {
+                this.$initialize();
+                System.IO.Stream.ctor.call(this);
+                this._buffer = buffer;
+                this.name = name;
+            }
+        },
+        methods: {
+            Flush: function () { },
+            Seek: function (offset, origin) {
+                throw new System.NotImplementedException();
+            },
+            SetLength: function (value) {
+                throw new System.NotImplementedException();
+            },
+            Write: function (buffer, offset, count) {
+                throw new System.NotImplementedException();
+            },
+            GetInternalBuffer: function () {
+                if (this._buffer == null) {
+                    this._buffer = System.IO.FileStream.ReadBytes(this.name);
+
+                }
+
+                return this._buffer;
+            },
+            EnsureBufferAsync: function () {
+                var $step = 0,
+                    $task1, 
+                    $taskResult1, 
+                    $jumpFromFinally, 
+                    $tcs = new System.Threading.Tasks.TaskCompletionSource(), 
+                    $returnValue, 
+                    $async_e, 
+                    $asyncBody = Bridge.fn.bind(this, function () {
+                        try {
+                            for (;;) {
+                                $step = System.Array.min([0,1,2,3], $step);
+                                switch ($step) {
+                                    case 0: {
+                                        if (this._buffer == null) {
+                                            $step = 1;
+                                            continue;
+                                        } 
+                                        $step = 3;
+                                        continue;
+                                    }
+                                    case 1: {
+                                        $task1 = System.IO.FileStream.ReadBytesAsync(this.name);
+                                        $step = 2;
+                                        $task1.continueWith($asyncBody);
+                                        return;
+                                    }
+                                    case 2: {
+                                        $taskResult1 = $task1.getAwaitedResult();
+                                        this._buffer = $taskResult1;
+                                        $step = 3;
+                                        continue;
+                                    }
+                                    case 3: {
+                                        $tcs.setResult(null);
+                                        return;
+                                    }
+                                    default: {
+                                        $tcs.setResult(null);
+                                        return;
+                                    }
+                                }
+                            }
+                        } catch($async_e1) {
+                            $async_e = System.Exception.create($async_e1);
+                            $tcs.setException($async_e);
+                        }
+                    }, arguments);
+
+                $asyncBody();
+                return $tcs.task;
+            },
+            Read: function (buffer, offset, count) {
+                if (buffer == null) {
+                    throw new System.ArgumentNullException("buffer");
+                }
+
+                if (offset < 0) {
+                    throw new System.ArgumentOutOfRangeException("offset");
+                }
+
+                if (count < 0) {
+                    throw new System.ArgumentOutOfRangeException("count");
+                }
+
+                if ((((buffer.length - offset) | 0)) < count) {
+                    throw new System.ArgumentException();
+                }
+
+                var num = this.Length.sub(this.Position);
+                if (num.gt(System.Int64(count))) {
+                    num = System.Int64(count);
+                }
+
+                if (num.lte(System.Int64(0))) {
+                    return 0;
+                }
+
+                var byteBuffer = new Uint8Array(this.GetInternalBuffer());
+                if (num.gt(System.Int64(8))) {
+                    for (var n = 0; System.Int64(n).lt(num); n = (n + 1) | 0) {
+                        buffer[System.Array.index(((n + offset) | 0), buffer)] = byteBuffer[this.Position.add(System.Int64(n))];
+                    }
+                } else {
+                    var num1 = num;
+                    while (true) {
+                        var num2 = num1.sub(System.Int64(1));
+                        num1 = num2;
+                        if (num2.lt(System.Int64(0))) {
+                            break;
+                        }
+                        buffer[System.Array.index(System.Int64.toNumber(System.Int64(offset).add(num1)), buffer)] = byteBuffer[this.Position.add(num1)];
+                    }
+                }
+                this.Position = this.Position.add(num);
+                return System.Int64.clip32(num);
+            }
+        }
+    });
+
+    Bridge.define("System.IO.MemoryStream", {
+        inherits: [System.IO.Stream],
+        statics: {
+            fields: {
+                MemStreamMaxLength: 0
+            },
+            ctors: {
+                init: function () {
+                    this.MemStreamMaxLength = 2147483647;
+                }
+            }
+        },
+        fields: {
+            _buffer: null,
+            _origin: 0,
+            _position: 0,
+            _length: 0,
+            _capacity: 0,
+            _expandable: false,
+            _writable: false,
+            _exposable: false,
+            _isOpen: false
+        },
+        props: {
+            CanRead: {
+                get: function () {
+                    return this._isOpen;
+                }
+            },
+            CanSeek: {
+                get: function () {
+                    return this._isOpen;
+                }
+            },
+            CanWrite: {
+                get: function () {
+                    return this._writable;
+                }
+            },
+            Capacity: {
+                get: function () {
+                    if (!this._isOpen) {
+                        System.IO.__Error.StreamIsClosed();
+                    }
+                    return ((this._capacity - this._origin) | 0);
+                },
+                set: function (value) {
+                    // Only update the capacity if the MS is expandable and the value is different than the current capacity.
+                    // Special behavior if the MS isn't expandable: we don't throw if value is the same as the current capacity
+                    if (System.Int64(value).lt(this.Length)) {
+                        throw new System.ArgumentOutOfRangeException("value", "ArgumentOutOfRange_SmallCapacity");
+                    }
+
+                    if (!this._isOpen) {
+                        System.IO.__Error.StreamIsClosed();
+                    }
+                    if (!this._expandable && (value !== this.Capacity)) {
+                        System.IO.__Error.MemoryStreamNotExpandable();
+                    }
+
+                    // MemoryStream has this invariant: _origin > 0 => !expandable (see ctors)
+                    if (this._expandable && value !== this._capacity) {
+                        if (value > 0) {
+                            var newBuffer = System.Array.init(value, 0, System.Byte);
+                            if (this._length > 0) {
+                                System.Array.copy(this._buffer, 0, newBuffer, 0, this._length);
+                            }
+                            this._buffer = newBuffer;
+                        } else {
+                            this._buffer = null;
+                        }
+                        this._capacity = value;
+                    }
+                }
+            },
+            Length: {
+                get: function () {
+                    if (!this._isOpen) {
+                        System.IO.__Error.StreamIsClosed();
+                    }
+                    return System.Int64(this._length - this._origin);
+                }
+            },
+            Position: {
+                get: function () {
+                    if (!this._isOpen) {
+                        System.IO.__Error.StreamIsClosed();
+                    }
+                    return System.Int64(this._position - this._origin);
+                },
+                set: function (value) {
+                    if (value.lt(System.Int64(0))) {
+                        throw new System.ArgumentOutOfRangeException("value", "ArgumentOutOfRange_NeedNonNegNum");
+                    }
+
+                    if (!this._isOpen) {
+                        System.IO.__Error.StreamIsClosed();
+                    }
+
+                    if (value.gt(System.Int64(System.IO.MemoryStream.MemStreamMaxLength))) {
+                        throw new System.ArgumentOutOfRangeException("value", "ArgumentOutOfRange_StreamLength");
+                    }
+                    this._position = (this._origin + System.Int64.clip32(value)) | 0;
+                }
+            }
+        },
+        ctors: {
+            ctor: function () {
+                System.IO.MemoryStream.$ctor6.call(this, 0);
+            },
+            $ctor6: function (capacity) {
+                this.$initialize();
+                System.IO.Stream.ctor.call(this);
+                if (capacity < 0) {
+                    throw new System.ArgumentOutOfRangeException("capacity", "ArgumentOutOfRange_NegativeCapacity");
+                }
+
+                this._buffer = System.Array.init(capacity, 0, System.Byte);
+                this._capacity = capacity;
+                this._expandable = true;
+                this._writable = true;
+                this._exposable = true;
+                this._origin = 0; // Must be 0 for byte[]'s created by MemoryStream
+                this._isOpen = true;
+            },
+            $ctor1: function (buffer) {
+                System.IO.MemoryStream.$ctor2.call(this, buffer, true);
+            },
+            $ctor2: function (buffer, writable) {
+                this.$initialize();
+                System.IO.Stream.ctor.call(this);
+                if (buffer == null) {
+                    throw new System.ArgumentNullException("buffer", "ArgumentNull_Buffer");
+                }
+                this._buffer = buffer;
+                this._length = (this._capacity = buffer.length);
+                this._writable = writable;
+                this._exposable = false;
+                this._origin = 0;
+                this._isOpen = true;
+            },
+            $ctor3: function (buffer, index, count) {
+                System.IO.MemoryStream.$ctor5.call(this, buffer, index, count, true, false);
+            },
+            $ctor4: function (buffer, index, count, writable) {
+                System.IO.MemoryStream.$ctor5.call(this, buffer, index, count, writable, false);
+            },
+            $ctor5: function (buffer, index, count, writable, publiclyVisible) {
+                this.$initialize();
+                System.IO.Stream.ctor.call(this);
+                if (buffer == null) {
+                    throw new System.ArgumentNullException("buffer", "ArgumentNull_Buffer");
+                }
+                if (index < 0) {
+                    throw new System.ArgumentOutOfRangeException("index", "ArgumentOutOfRange_NeedNonNegNum");
+                }
+                if (count < 0) {
+                    throw new System.ArgumentOutOfRangeException("count", "ArgumentOutOfRange_NeedNonNegNum");
+                }
+                if (((buffer.length - index) | 0) < count) {
+                    throw new System.ArgumentException("Argument_InvalidOffLen");
+                }
+
+                this._buffer = buffer;
+                this._origin = (this._position = index);
+                this._length = (this._capacity = (index + count) | 0);
+                this._writable = writable;
+                this._exposable = publiclyVisible; // Can TryGetBuffer/GetBuffer return the array?
+                this._expandable = false;
+                this._isOpen = true;
+            }
+        },
+        methods: {
+            EnsureWriteable: function () {
+                if (!this.CanWrite) {
+                    System.IO.__Error.WriteNotSupported();
+                }
+            },
+            Dispose$1: function (disposing) {
+                try {
+                    if (disposing) {
+                        this._isOpen = false;
+                        this._writable = false;
+                        this._expandable = false;
+                    }
+                }
+                finally {
+                    // Call base.Close() to cleanup async IO resources
+                    System.IO.Stream.prototype.Dispose$1.call(this, disposing);
+                }
+            },
+            EnsureCapacity: function (value) {
+                // Check for overflow
+                if (value < 0) {
+                    throw new System.IO.IOException.$ctor1("IO.IO_StreamTooLong");
+                }
+                if (value > this._capacity) {
+                    var newCapacity = value;
+                    if (newCapacity < 256) {
+                        newCapacity = 256;
+                    }
+                    // We are ok with this overflowing since the next statement will deal
+                    // with the cases where _capacity*2 overflows.
+                    if (newCapacity < Bridge.Int.mul(this._capacity, 2)) {
+                        newCapacity = Bridge.Int.mul(this._capacity, 2);
+                    }
+                    // We want to expand the array up to Array.MaxArrayLengthOneDimensional
+                    // And we want to give the user the value that they asked for
+                    if ((((Bridge.Int.mul(this._capacity, 2))) >>> 0) > 2147483591) {
+                        newCapacity = value > 2147483591 ? value : 2147483591;
+                    }
+
+                    this.Capacity = newCapacity;
+                    return true;
+                }
+                return false;
+            },
+            Flush: function () { },
+            GetBuffer: function () {
+                if (!this._exposable) {
+                    throw new System.Exception("UnauthorizedAccess_MemStreamBuffer");
+                }
+                return this._buffer;
+            },
+            TryGetBuffer: function (buffer) {
+                if (!this._exposable) {
+                    buffer.v = Bridge.getDefaultValue(System.ArraySegment);
+                    return false;
+                }
+
+                buffer.v = new System.ArraySegment(this._buffer, this._origin, (((this._length - this._origin) | 0)));
+                return true;
+            },
+            InternalGetBuffer: function () {
+                return this._buffer;
+            },
+            InternalGetPosition: function () {
+                if (!this._isOpen) {
+                    System.IO.__Error.StreamIsClosed();
+                }
+                return this._position;
+            },
+            InternalReadInt32: function () {
+                if (!this._isOpen) {
+                    System.IO.__Error.StreamIsClosed();
+                }
+
+                var pos = ((this._position = (this._position + 4) | 0)); // use temp to avoid ----
+                if (pos > this._length) {
+                    this._position = this._length;
+                    System.IO.__Error.EndOfFile();
+                }
+                return this._buffer[System.Array.index(((pos - 4) | 0), this._buffer)] | this._buffer[System.Array.index(((pos - 3) | 0), this._buffer)] << 8 | this._buffer[System.Array.index(((pos - 2) | 0), this._buffer)] << 16 | this._buffer[System.Array.index(((pos - 1) | 0), this._buffer)] << 24;
+            },
+            InternalEmulateRead: function (count) {
+                if (!this._isOpen) {
+                    System.IO.__Error.StreamIsClosed();
+                }
+
+                var n = (this._length - this._position) | 0;
+                if (n > count) {
+                    n = count;
+                }
+                if (n < 0) {
+                    n = 0;
+                } // len is less than 2^31 -1.
+                this._position = (this._position + n) | 0;
+                return n;
+            },
+            Read: function (buffer, offset, count) {
+                if (buffer == null) {
+                    throw new System.ArgumentNullException("buffer", "ArgumentNull_Buffer");
+                }
+                if (offset < 0) {
+                    throw new System.ArgumentOutOfRangeException("offset", "ArgumentOutOfRange_NeedNonNegNum");
+                }
+                if (count < 0) {
+                    throw new System.ArgumentOutOfRangeException("count", "ArgumentOutOfRange_NeedNonNegNum");
+                }
+                if (((buffer.length - offset) | 0) < count) {
+                    throw new System.ArgumentException("Argument_InvalidOffLen");
+                }
+
+                if (!this._isOpen) {
+                    System.IO.__Error.StreamIsClosed();
+                }
+
+                var n = (this._length - this._position) | 0;
+                if (n > count) {
+                    n = count;
+                }
+                if (n <= 0) {
+                    return 0;
+                } // len is less than 2^31 -1.
+
+                if (n <= 8) {
+                    var byteCount = n;
+                    while (((byteCount = (byteCount - 1) | 0)) >= 0) {
+                        buffer[System.Array.index(((offset + byteCount) | 0), buffer)] = this._buffer[System.Array.index(((this._position + byteCount) | 0), this._buffer)];
+                    }
+                } else {
+                    System.Array.copy(this._buffer, this._position, buffer, offset, n);
+                }
+                this._position = (this._position + n) | 0;
+
+                return n;
+            },
+            ReadByte: function () {
+                if (!this._isOpen) {
+                    System.IO.__Error.StreamIsClosed();
+                }
+
+                if (this._position >= this._length) {
+                    return -1;
+                }
+
+                return this._buffer[System.Array.index(Bridge.identity(this._position, (this._position = (this._position + 1) | 0)), this._buffer)];
+            },
+            Seek: function (offset, loc) {
+                if (!this._isOpen) {
+                    System.IO.__Error.StreamIsClosed();
+                }
+
+                if (offset.gt(System.Int64(System.IO.MemoryStream.MemStreamMaxLength))) {
+                    throw new System.ArgumentOutOfRangeException("offset", "ArgumentOutOfRange_StreamLength");
+                }
+                switch (loc) {
+                    case System.IO.SeekOrigin.Begin: 
+                        {
+                            var tempPosition = ((this._origin + System.Int64.clip32(offset)) | 0);
+                            if (offset.lt(System.Int64(0)) || tempPosition < this._origin) {
+                                throw new System.IO.IOException.$ctor1("IO.IO_SeekBeforeBegin");
+                            }
+                            this._position = tempPosition;
+                            break;
+                        }
+                    case System.IO.SeekOrigin.Current: 
+                        {
+                            var tempPosition1 = ((this._position + System.Int64.clip32(offset)) | 0);
+                            if (System.Int64(this._position).add(offset).lt(System.Int64(this._origin)) || tempPosition1 < this._origin) {
+                                throw new System.IO.IOException.$ctor1("IO.IO_SeekBeforeBegin");
+                            }
+                            this._position = tempPosition1;
+                            break;
+                        }
+                    case System.IO.SeekOrigin.End: 
+                        {
+                            var tempPosition2 = ((this._length + System.Int64.clip32(offset)) | 0);
+                            if (System.Int64(this._length).add(offset).lt(System.Int64(this._origin)) || tempPosition2 < this._origin) {
+                                throw new System.IO.IOException.$ctor1("IO.IO_SeekBeforeBegin");
+                            }
+                            this._position = tempPosition2;
+                            break;
+                        }
+                    default: 
+                        throw new System.ArgumentException("Argument_InvalidSeekOrigin");
+                }
+
+                return System.Int64(this._position);
+            },
+            SetLength: function (value) {
+                if (value.lt(System.Int64(0)) || value.gt(System.Int64(2147483647))) {
+                    throw new System.ArgumentOutOfRangeException("value", "ArgumentOutOfRange_StreamLength");
+                }
+                this.EnsureWriteable();
+
+                // Origin wasn't publicly exposed above. // Check parameter validation logic in this method if this fails.
+                if (value.gt(System.Int64((((2147483647 - this._origin) | 0))))) {
+                    throw new System.ArgumentOutOfRangeException("value", "ArgumentOutOfRange_StreamLength");
+                }
+
+                var newLength = (this._origin + System.Int64.clip32(value)) | 0;
+                var allocatedNewArray = this.EnsureCapacity(newLength);
+                if (!allocatedNewArray && newLength > this._length) {
+                    System.Array.fill(this._buffer, 0, this._length, ((newLength - this._length) | 0));
+                }
+                this._length = newLength;
+                if (this._position > newLength) {
+                    this._position = newLength;
+                }
+
+            },
+            ToArray: function () {
+                var copy = System.Array.init(((this._length - this._origin) | 0), 0, System.Byte);
+                System.Array.copy(this._buffer, this._origin, copy, 0, ((this._length - this._origin) | 0));
+                return copy;
+            },
+            Write: function (buffer, offset, count) {
+                if (buffer == null) {
+                    throw new System.ArgumentNullException("buffer", "ArgumentNull_Buffer");
+                }
+                if (offset < 0) {
+                    throw new System.ArgumentOutOfRangeException("offset", "ArgumentOutOfRange_NeedNonNegNum");
+                }
+                if (count < 0) {
+                    throw new System.ArgumentOutOfRangeException("count", "ArgumentOutOfRange_NeedNonNegNum");
+                }
+                if (((buffer.length - offset) | 0) < count) {
+                    throw new System.ArgumentException("Argument_InvalidOffLen");
+                }
+
+                if (!this._isOpen) {
+                    System.IO.__Error.StreamIsClosed();
+                }
+                this.EnsureWriteable();
+
+                var i = (this._position + count) | 0;
+                // Check for overflow
+                if (i < 0) {
+                    throw new System.IO.IOException.$ctor1("IO.IO_StreamTooLong");
+                }
+
+                if (i > this._length) {
+                    var mustZero = this._position > this._length;
+                    if (i > this._capacity) {
+                        var allocatedNewArray = this.EnsureCapacity(i);
+                        if (allocatedNewArray) {
+                            mustZero = false;
+                        }
+                    }
+                    if (mustZero) {
+                        System.Array.fill(this._buffer, 0, this._length, ((i - this._length) | 0));
+                    }
+                    this._length = i;
+                }
+                if ((count <= 8) && (!Bridge.referenceEquals(buffer, this._buffer))) {
+                    var byteCount = count;
+                    while (((byteCount = (byteCount - 1) | 0)) >= 0) {
+                        this._buffer[System.Array.index(((this._position + byteCount) | 0), this._buffer)] = buffer[System.Array.index(((offset + byteCount) | 0), buffer)];
+                    }
+                } else {
+                    System.Array.copy(buffer, offset, this._buffer, this._position, count);
+                }
+                this._position = i;
+
+            },
+            WriteByte: function (value) {
+                if (!this._isOpen) {
+                    System.IO.__Error.StreamIsClosed();
+                }
+                this.EnsureWriteable();
+
+                if (this._position >= this._length) {
+                    var newLength = (this._position + 1) | 0;
+                    var mustZero = this._position > this._length;
+                    if (newLength >= this._capacity) {
+                        var allocatedNewArray = this.EnsureCapacity(newLength);
+                        if (allocatedNewArray) {
+                            mustZero = false;
+                        }
+                    }
+                    if (mustZero) {
+                        System.Array.fill(this._buffer, 0, this._length, ((this._position - this._length) | 0));
+                    }
+                    this._length = newLength;
+                }
+                this._buffer[System.Array.index(Bridge.identity(this._position, (this._position = (this._position + 1) | 0)), this._buffer)] = value;
+
+            },
+            WriteTo: function (stream) {
+                if (stream == null) {
+                    throw new System.ArgumentNullException("stream", "ArgumentNull_Stream");
+                }
+
+                if (!this._isOpen) {
+                    System.IO.__Error.StreamIsClosed();
+                }
+                stream.Write(this._buffer, this._origin, ((this._length - this._origin) | 0));
+            }
+        }
+    });
+
+    Bridge.define("System.IO.ReadLinesIterator", {
+        inherits: [System.IO.Iterator$1(System.String)],
+        statics: {
+            methods: {
+                CreateIterator: function (path, encoding) {
+                    return System.IO.ReadLinesIterator.CreateIterator$1(path, encoding, null);
+                },
+                CreateIterator$1: function (path, encoding, reader) {
+                    return new System.IO.ReadLinesIterator(path, encoding, reader || new System.IO.StreamReader.$ctor9(path, encoding));
+                }
+            }
+        },
+        fields: {
+            _path: null,
+            _encoding: null,
+            _reader: null
+        },
+        alias: ["MoveNext", "System$Collections$IEnumerator$moveNext"],
+        ctors: {
+            ctor: function (path, encoding, reader) {
+                this.$initialize();
+                System.IO.Iterator$1(System.String).ctor.call(this);
+
+                this._path = path;
+                this._encoding = encoding;
+                this._reader = reader;
+            }
+        },
+        methods: {
+            MoveNext: function () {
+                if (this._reader != null) {
+                    this.current = this._reader.ReadLine();
+                    if (this.current != null) {
+                        return true;
+                    }
+
+                    // To maintain 4.0 behavior we Dispose
+                    // after reading to the end of the reader.
+                    this.Dispose();
+                }
+
+                return false;
+            },
+            Clone: function () {
+                // NOTE: To maintain the same behavior with the previous yield-based
+                // iterator in 4.0, we have all the IEnumerator<T> instances share the same
+                // underlying reader. If we have already been disposed, _reader will be null,
+                // which will cause CreateIterator to simply new up a new instance to start up
+                // a new iteration. Dev10 Bugs 904764 has been filed to fix this in next side-
+                // by-side release.
+                return System.IO.ReadLinesIterator.CreateIterator$1(this._path, this._encoding, this._reader);
+            },
+            Dispose$1: function (disposing) {
+                try {
+                    if (disposing) {
+                        if (this._reader != null) {
+                            this._reader.Dispose();
+                        }
+                    }
+                }
+                finally {
+                    this._reader = null;
+                    System.IO.Iterator$1(System.String).prototype.Dispose$1.call(this, disposing);
+                }
+            }
+        }
+    });
+
+    Bridge.define("System.IO.Stream.NullStream", {
+        inherits: [System.IO.Stream],
+        props: {
+            CanRead: {
+                get: function () {
+                    return true;
+                }
+            },
+            CanWrite: {
+                get: function () {
+                    return true;
+                }
+            },
+            CanSeek: {
+                get: function () {
+                    return true;
+                }
+            },
+            Length: {
+                get: function () {
+                    return System.Int64(0);
+                }
+            },
+            Position: {
+                get: function () {
+                    return System.Int64(0);
+                },
+                set: function (value) { }
+            }
+        },
+        ctors: {
+            ctor: function () {
+                this.$initialize();
+                System.IO.Stream.ctor.call(this);
+            }
+        },
+        methods: {
+            Dispose$1: function (disposing) {
+                // Do nothing - we don't want NullStream singleton (static) to be closable
+            },
+            Flush: function () { },
+            BeginRead: function (buffer, offset, count, callback, state) {
+                if (!this.CanRead) {
+                    System.IO.__Error.ReadNotSupported();
+                }
+
+                return this.BlockingBeginRead(buffer, offset, count, callback, state);
+            },
+            EndRead: function (asyncResult) {
+                if (asyncResult == null) {
+                    throw new System.ArgumentNullException("asyncResult");
+                }
+
+                return System.IO.Stream.BlockingEndRead(asyncResult);
+            },
+            BeginWrite: function (buffer, offset, count, callback, state) {
+                if (!this.CanWrite) {
+                    System.IO.__Error.WriteNotSupported();
+                }
+
+                return this.BlockingBeginWrite(buffer, offset, count, callback, state);
+            },
+            EndWrite: function (asyncResult) {
+                if (asyncResult == null) {
+                    throw new System.ArgumentNullException("asyncResult");
+                }
+
+                System.IO.Stream.BlockingEndWrite(asyncResult);
+            },
+            Read: function (buffer, offset, count) {
+                return 0;
+            },
+            ReadByte: function () {
+                return -1;
+            },
+            Write: function (buffer, offset, count) { },
+            WriteByte: function (value) { },
+            Seek: function (offset, origin) {
+                return System.Int64(0);
+            },
+            SetLength: function (length) { }
+        }
+    });
+
+    Bridge.define("System.IO.StreamReader", {
+        inherits: [System.IO.TextReader],
+        statics: {
+            fields: {
+                Null: null,
+                DefaultFileStreamBufferSize: 0,
+                MinBufferSize: 0
+            },
+            props: {
+                DefaultBufferSize: {
+                    get: function () {
+                        return 1024;
+                    }
+                }
+            },
+            ctors: {
+                init: function () {
+                    this.Null = new System.IO.StreamReader.NullStreamReader();
+                    this.DefaultFileStreamBufferSize = 4096;
+                    this.MinBufferSize = 128;
+                }
+            }
+        },
+        fields: {
+            stream: null,
+            encoding: null,
+            byteBuffer: null,
+            charBuffer: null,
+            charPos: 0,
+            charLen: 0,
+            byteLen: 0,
+            bytePos: 0,
+            _maxCharsPerBuffer: 0,
+            _detectEncoding: false,
+            _isBlocked: false,
+            _closable: false
+        },
+        props: {
+            CurrentEncoding: {
+                get: function () {
+                    return this.encoding;
+                }
+            },
+            BaseStream: {
+                get: function () {
+                    return this.stream;
+                }
+            },
+            LeaveOpen: {
+                get: function () {
+                    return !this._closable;
+                }
+            },
+            EndOfStream: {
+                get: function () {
+                    if (this.stream == null) {
+                        System.IO.__Error.ReaderClosed();
+                    }
+
+
+                    if (this.charPos < this.charLen) {
+                        return false;
+                    }
+
+                    // This may block on pipes!
+                    var numRead = this.ReadBuffer();
+                    return numRead === 0;
+                }
+            }
+        },
+        ctors: {
+            ctor: function () {
+                this.$initialize();
+                System.IO.TextReader.ctor.call(this);
+            },
+            $ctor1: function (stream) {
+                System.IO.StreamReader.$ctor2.call(this, stream, true);
+            },
+            $ctor2: function (stream, detectEncodingFromByteOrderMarks) {
+                System.IO.StreamReader.$ctor6.call(this, stream, System.Text.Encoding.UTF8, detectEncodingFromByteOrderMarks, System.IO.StreamReader.DefaultBufferSize, false);
+            },
+            $ctor3: function (stream, encoding) {
+                System.IO.StreamReader.$ctor6.call(this, stream, encoding, true, System.IO.StreamReader.DefaultBufferSize, false);
+            },
+            $ctor4: function (stream, encoding, detectEncodingFromByteOrderMarks) {
+                System.IO.StreamReader.$ctor6.call(this, stream, encoding, detectEncodingFromByteOrderMarks, System.IO.StreamReader.DefaultBufferSize, false);
+            },
+            $ctor5: function (stream, encoding, detectEncodingFromByteOrderMarks, bufferSize) {
+                System.IO.StreamReader.$ctor6.call(this, stream, encoding, detectEncodingFromByteOrderMarks, bufferSize, false);
+            },
+            $ctor6: function (stream, encoding, detectEncodingFromByteOrderMarks, bufferSize, leaveOpen) {
+                this.$initialize();
+                System.IO.TextReader.ctor.call(this);
+                if (stream == null || encoding == null) {
+                    throw new System.ArgumentNullException((stream == null ? "stream" : "encoding"));
+                }
+                if (!stream.CanRead) {
+                    throw new System.ArgumentException();
+                }
+                if (bufferSize <= 0) {
+                    throw new System.ArgumentOutOfRangeException("bufferSize");
+                }
+
+                this.Init$1(stream, encoding, detectEncodingFromByteOrderMarks, bufferSize, leaveOpen);
+            },
+            $ctor7: function (path) {
+                System.IO.StreamReader.$ctor8.call(this, path, true);
+            },
+            $ctor8: function (path, detectEncodingFromByteOrderMarks) {
+                System.IO.StreamReader.$ctor11.call(this, path, System.Text.Encoding.UTF8, detectEncodingFromByteOrderMarks, System.IO.StreamReader.DefaultBufferSize);
+            },
+            $ctor9: function (path, encoding) {
+                System.IO.StreamReader.$ctor11.call(this, path, encoding, true, System.IO.StreamReader.DefaultBufferSize);
+            },
+            $ctor10: function (path, encoding, detectEncodingFromByteOrderMarks) {
+                System.IO.StreamReader.$ctor11.call(this, path, encoding, detectEncodingFromByteOrderMarks, System.IO.StreamReader.DefaultBufferSize);
+            },
+            $ctor11: function (path, encoding, detectEncodingFromByteOrderMarks, bufferSize) {
+                System.IO.StreamReader.$ctor12.call(this, path, encoding, detectEncodingFromByteOrderMarks, bufferSize, true);
+            },
+            $ctor12: function (path, encoding, detectEncodingFromByteOrderMarks, bufferSize, checkHost) {
+                this.$initialize();
+                System.IO.TextReader.ctor.call(this);
+                // Don't open a Stream before checking for invalid arguments,
+                // or we'll create a FileStream on disk and we won't close it until
+                // the finalizer runs, causing problems for applications.
+                if (path == null || encoding == null) {
+                    throw new System.ArgumentNullException((path == null ? "path" : "encoding"));
+                }
+                if (path.length === 0) {
+                    throw new System.ArgumentException();
+                }
+                if (bufferSize <= 0) {
+                    throw new System.ArgumentOutOfRangeException("bufferSize");
+                }
+
+                var stream = new System.IO.FileStream.$ctor1(path, System.IO.FileMode.Open);
+                this.Init$1(stream, encoding, detectEncodingFromByteOrderMarks, bufferSize, false);
+            }
+        },
+        methods: {
+            Init$1: function (stream, encoding, detectEncodingFromByteOrderMarks, bufferSize, leaveOpen) {
+                this.stream = stream;
+                this.encoding = encoding;
+                if (bufferSize < System.IO.StreamReader.MinBufferSize) {
+                    bufferSize = System.IO.StreamReader.MinBufferSize;
+                }
+                this.byteBuffer = System.Array.init(bufferSize, 0, System.Byte);
+                this._maxCharsPerBuffer = encoding.GetMaxCharCount(bufferSize);
+                this.charBuffer = System.Array.init(this._maxCharsPerBuffer, 0, System.Char);
+                this.byteLen = 0;
+                this.bytePos = 0;
+                this._detectEncoding = detectEncodingFromByteOrderMarks;
+                this._isBlocked = false;
+                this._closable = !leaveOpen;
+            },
+            Init: function (stream) {
+                this.stream = stream;
+                this._closable = true;
+            },
+            Close: function () {
+                this.Dispose$1(true);
+            },
+            Dispose$1: function (disposing) {
+                // Dispose of our resources if this StreamReader is closable.
+                // Note that Console.In should be left open.
+                try {
+                    // Note that Stream.Close() can potentially throw here. So we need to
+                    // ensure cleaning up internal resources, inside the finally block.
+                    if (!this.LeaveOpen && disposing && (this.stream != null)) {
+                        this.stream.Close();
+                    }
+                }
+                finally {
+                    if (!this.LeaveOpen && (this.stream != null)) {
+                        this.stream = null;
+                        this.encoding = null;
+                        this.byteBuffer = null;
+                        this.charBuffer = null;
+                        this.charPos = 0;
+                        this.charLen = 0;
+                        System.IO.TextReader.prototype.Dispose$1.call(this, disposing);
+                    }
+                }
+            },
+            DiscardBufferedData: function () {
+
+                this.byteLen = 0;
+                this.charLen = 0;
+                this.charPos = 0;
+                this._isBlocked = false;
+            },
+            Peek: function () {
+                if (this.stream == null) {
+                    System.IO.__Error.ReaderClosed();
+                }
+
+                if (this.charPos === this.charLen) {
+                    if (this._isBlocked || this.ReadBuffer() === 0) {
+                        return -1;
+                    }
+                }
+                return this.charBuffer[System.Array.index(this.charPos, this.charBuffer)];
+            },
+            Read: function () {
+                if (this.stream == null) {
+                    System.IO.__Error.ReaderClosed();
+                }
+
+
+                if (this.charPos === this.charLen) {
+                    if (this.ReadBuffer() === 0) {
+                        return -1;
+                    }
+                }
+                var result = this.charBuffer[System.Array.index(this.charPos, this.charBuffer)];
+                this.charPos = (this.charPos + 1) | 0;
+                return result;
+            },
+            Read$1: function (buffer, index, count) {
+                if (buffer == null) {
+                    throw new System.ArgumentNullException("buffer");
+                }
+                if (index < 0 || count < 0) {
+                    throw new System.ArgumentOutOfRangeException((index < 0 ? "index" : "count"));
+                }
+                if (((buffer.length - index) | 0) < count) {
+                    throw new System.ArgumentException();
+                }
+
+                if (this.stream == null) {
+                    System.IO.__Error.ReaderClosed();
+                }
+
+
+                var charsRead = 0;
+                // As a perf optimization, if we had exactly one buffer's worth of
+                // data read in, let's try writing directly to the user's buffer.
+                var readToUserBuffer = { v : false };
+                while (count > 0) {
+                    var n = (this.charLen - this.charPos) | 0;
+                    if (n === 0) {
+                        n = this.ReadBuffer$1(buffer, ((index + charsRead) | 0), count, readToUserBuffer);
+                    }
+                    if (n === 0) {
+                        break;
+                    } // We're at EOF
+                    if (n > count) {
+                        n = count;
+                    }
+                    if (!readToUserBuffer.v) {
+                        System.Array.copy(this.charBuffer, this.charPos, buffer, (((index + charsRead) | 0)), n);
+                        this.charPos = (this.charPos + n) | 0;
+                    }
+                    charsRead = (charsRead + n) | 0;
+                    count = (count - n) | 0;
+                    // This function shouldn't block for an indefinite amount of time,
+                    // or reading from a network stream won't work right.  If we got
+                    // fewer bytes than we requested, then we want to break right here.
+                    if (this._isBlocked) {
+                        break;
+                    }
+                }
+
+                return charsRead;
+            },
+            ReadToEndAsync: function () {
+                var $step = 0,
+                    $task1, 
+                    $task2, 
+                    $taskResult2, 
+                    $jumpFromFinally, 
+                    $tcs = new System.Threading.Tasks.TaskCompletionSource(), 
+                    $returnValue, 
+                    $async_e, 
+                    $asyncBody = Bridge.fn.bind(this, function () {
+                        try {
+                            for (;;) {
+                                $step = System.Array.min([0,1,2,3,4], $step);
+                                switch ($step) {
+                                    case 0: {
+                                        if (Bridge.is(this.stream, System.IO.FileStream)) {
+                                            $step = 1;
+                                            continue;
+                                        } 
+                                        $step = 3;
+                                        continue;
+                                    }
+                                    case 1: {
+                                        $task1 = this.stream.EnsureBufferAsync();
+                                        $step = 2;
+                                        $task1.continueWith($asyncBody);
+                                        return;
+                                    }
+                                    case 2: {
+                                        $task1.getAwaitedResult();
+                                        $step = 3;
+                                        continue;
+                                    }
+                                    case 3: {
+                                        $task2 = System.IO.TextReader.prototype.ReadToEndAsync.call(this);
+                                        $step = 4;
+                                        $task2.continueWith($asyncBody);
+                                        return;
+                                    }
+                                    case 4: {
+                                        $taskResult2 = $task2.getAwaitedResult();
+                                        $tcs.setResult($taskResult2);
+                                        return;
+                                    }
+                                    default: {
+                                        $tcs.setResult(null);
+                                        return;
+                                    }
+                                }
+                            }
+                        } catch($async_e1) {
+                            $async_e = System.Exception.create($async_e1);
+                            $tcs.setException($async_e);
+                        }
+                    }, arguments);
+
+                $asyncBody();
+                return $tcs.task;
+            },
+            ReadToEnd: function () {
+                if (this.stream == null) {
+                    System.IO.__Error.ReaderClosed();
+                }
+
+                // Call ReadBuffer, then pull data out of charBuffer.
+                var sb = new System.Text.StringBuilder("", ((this.charLen - this.charPos) | 0));
+                do {
+                    sb.append(System.String.fromCharArray(this.charBuffer, this.charPos, ((this.charLen - this.charPos) | 0)));
+                    this.charPos = this.charLen; // Note we consumed these characters
+                    this.ReadBuffer();
+                } while (this.charLen > 0);
+                return sb.toString();
+            },
+            ReadBlock: function (buffer, index, count) {
+                if (buffer == null) {
+                    throw new System.ArgumentNullException("buffer");
+                }
+                if (index < 0 || count < 0) {
+                    throw new System.ArgumentOutOfRangeException((index < 0 ? "index" : "count"));
+                }
+                if (((buffer.length - index) | 0) < count) {
+                    throw new System.ArgumentException();
+                }
+
+                if (this.stream == null) {
+                    System.IO.__Error.ReaderClosed();
+                }
+
+                return System.IO.TextReader.prototype.ReadBlock.call(this, buffer, index, count);
+            },
+            CompressBuffer: function (n) {
+                System.Array.copy(this.byteBuffer, n, this.byteBuffer, 0, ((this.byteLen - n) | 0));
+                this.byteLen = (this.byteLen - n) | 0;
+            },
+            DetectEncoding: function () {
+                if (this.byteLen < 2) {
+                    return;
+                }
+                this._detectEncoding = false;
+                var changedEncoding = false;
+                if (this.byteBuffer[System.Array.index(0, this.byteBuffer)] === 254 && this.byteBuffer[System.Array.index(1, this.byteBuffer)] === 255) {
+                    // Big Endian Unicode
+
+                    this.encoding = new System.Text.UnicodeEncoding.$ctor1(true, true);
+                    this.CompressBuffer(2);
+                    changedEncoding = true;
+                } else if (this.byteBuffer[System.Array.index(0, this.byteBuffer)] === 255 && this.byteBuffer[System.Array.index(1, this.byteBuffer)] === 254) {
+                    // Little Endian Unicode, or possibly little endian UTF32
+                    if (this.byteLen < 4 || this.byteBuffer[System.Array.index(2, this.byteBuffer)] !== 0 || this.byteBuffer[System.Array.index(3, this.byteBuffer)] !== 0) {
+                        this.encoding = new System.Text.UnicodeEncoding.$ctor1(false, true);
+                        this.CompressBuffer(2);
+                        changedEncoding = true;
+                    } else {
+                        this.encoding = new System.Text.UTF32Encoding.$ctor1(false, true);
+                        this.CompressBuffer(4);
+                        changedEncoding = true;
+                    }
+                } else if (this.byteLen >= 3 && this.byteBuffer[System.Array.index(0, this.byteBuffer)] === 239 && this.byteBuffer[System.Array.index(1, this.byteBuffer)] === 187 && this.byteBuffer[System.Array.index(2, this.byteBuffer)] === 191) {
+                    // UTF-8
+                    this.encoding = System.Text.Encoding.UTF8;
+                    this.CompressBuffer(3);
+                    changedEncoding = true;
+                } else if (this.byteLen >= 4 && this.byteBuffer[System.Array.index(0, this.byteBuffer)] === 0 && this.byteBuffer[System.Array.index(1, this.byteBuffer)] === 0 && this.byteBuffer[System.Array.index(2, this.byteBuffer)] === 254 && this.byteBuffer[System.Array.index(3, this.byteBuffer)] === 255) {
+                    // Big Endian UTF32
+                    this.encoding = new System.Text.UTF32Encoding.$ctor1(true, true);
+                    this.CompressBuffer(4);
+                    changedEncoding = true;
+                } else if (this.byteLen === 2) {
+                    this._detectEncoding = true;
+                }
+                // Note: in the future, if we change this algorithm significantly,
+                // we can support checking for the preamble of the given encoding.
+
+                if (changedEncoding) {
+                    this._maxCharsPerBuffer = this.encoding.GetMaxCharCount(this.byteBuffer.length);
+                    this.charBuffer = System.Array.init(this._maxCharsPerBuffer, 0, System.Char);
+                }
+            },
+            IsPreamble: function () {
+                return false;
+            },
+            ReadBuffer: function () {
+                this.charLen = 0;
+                this.charPos = 0;
+
+                this.byteLen = 0;
+                do {
+                    this.byteLen = this.stream.Read(this.byteBuffer, 0, this.byteBuffer.length);
+
+                    if (this.byteLen === 0) {
+                        return this.charLen;
+                    }
+
+                    // _isBlocked == whether we read fewer bytes than we asked for.
+                    // Note we must check it here because CompressBuffer or
+                    // DetectEncoding will change byteLen.
+                    this._isBlocked = (this.byteLen < this.byteBuffer.length);
+
+                    // Check for preamble before detect encoding. This is not to override the
+                    // user suppplied Encoding for the one we implicitly detect. The user could
+                    // customize the encoding which we will loose, such as ThrowOnError on UTF8
+                    if (this.IsPreamble()) {
+                        continue;
+                    }
+
+                    // If we're supposed to detect the encoding and haven't done so yet,
+                    // do it.  Note this may need to be called more than once.
+                    if (this._detectEncoding && this.byteLen >= 2) {
+                        this.DetectEncoding();
+                    }
+
+                    this.charLen = (this.charLen + (this.encoding.GetChars$2(this.byteBuffer, 0, this.byteLen, this.charBuffer, this.charLen))) | 0;
+                } while (this.charLen === 0);
+                //Console.WriteLine("ReadBuffer called.  chars: "+charLen);
+                return this.charLen;
+            },
+            ReadBuffer$1: function (userBuffer, userOffset, desiredChars, readToUserBuffer) {
+                this.charLen = 0;
+                this.charPos = 0;
+
+                this.byteLen = 0;
+
+                var charsRead = 0;
+
+                // As a perf optimization, we can decode characters DIRECTLY into a
+                // user's char[].  We absolutely must not write more characters
+                // into the user's buffer than they asked for.  Calculating
+                // encoding.GetMaxCharCount(byteLen) each time is potentially very
+                // expensive - instead, cache the number of chars a full buffer's
+                // worth of data may produce.  Yes, this makes the perf optimization
+                // less aggressive, in that all reads that asked for fewer than AND
+                // returned fewer than _maxCharsPerBuffer chars won't get the user
+                // buffer optimization.  This affects reads where the end of the
+                // Stream comes in the middle somewhere, and when you ask for
+                // fewer chars than your buffer could produce.
+                readToUserBuffer.v = desiredChars >= this._maxCharsPerBuffer;
+
+                do {
+
+
+                    this.byteLen = this.stream.Read(this.byteBuffer, 0, this.byteBuffer.length);
+
+
+                    if (this.byteLen === 0) {
+                        break;
+                    }
+
+                    // _isBlocked == whether we read fewer bytes than we asked for.
+                    // Note we must check it here because CompressBuffer or
+                    // DetectEncoding will change byteLen.
+                    this._isBlocked = (this.byteLen < this.byteBuffer.length);
+
+                    // Check for preamble before detect encoding. This is not to override the
+                    // user suppplied Encoding for the one we implicitly detect. The user could
+                    // customize the encoding which we will loose, such as ThrowOnError on UTF8
+                    // Note: we don't need to recompute readToUserBuffer optimization as IsPreamble
+                    // doesn't change the encoding or affect _maxCharsPerBuffer
+                    if (this.IsPreamble()) {
+                        continue;
+                    }
+
+                    // On the first call to ReadBuffer, if we're supposed to detect the encoding, do it.
+                    if (this._detectEncoding && this.byteLen >= 2) {
+                        this.DetectEncoding();
+                        // DetectEncoding changes some buffer state.  Recompute this.
+                        readToUserBuffer.v = desiredChars >= this._maxCharsPerBuffer;
+                    }
+
+                    this.charPos = 0;
+                    if (readToUserBuffer.v) {
+                        charsRead = (charsRead + (this.encoding.GetChars$2(this.byteBuffer, 0, this.byteLen, userBuffer, ((userOffset + charsRead) | 0)))) | 0;
+                        this.charLen = 0; // StreamReader's buffer is empty.
+                    } else {
+                        charsRead = this.encoding.GetChars$2(this.byteBuffer, 0, this.byteLen, this.charBuffer, charsRead);
+                        this.charLen = (this.charLen + charsRead) | 0; // Number of chars in StreamReader's buffer.
+                    }
+                } while (charsRead === 0);
+
+                this._isBlocked = !!(this._isBlocked & charsRead < desiredChars);
+
+                //Console.WriteLine("ReadBuffer: charsRead: "+charsRead+"  readToUserBuffer: "+readToUserBuffer);
+                return charsRead;
+            },
+            ReadLine: function () {
+                if (this.stream == null) {
+                    System.IO.__Error.ReaderClosed();
+                }
+
+                if (this.charPos === this.charLen) {
+                    if (this.ReadBuffer() === 0) {
+                        return null;
+                    }
+                }
+
+                var sb = null;
+                do {
+                    var i = this.charPos;
+                    do {
+                        var ch = this.charBuffer[System.Array.index(i, this.charBuffer)];
+                        // Note the following common line feed chars:
+                        // \n - UNIX   \r\n - DOS   \r - Mac
+                        if (ch === 13 || ch === 10) {
+                            var s;
+                            if (sb != null) {
+                                sb.append(System.String.fromCharArray(this.charBuffer, this.charPos, ((i - this.charPos) | 0)));
+                                s = sb.toString();
+                            } else {
+                                s = System.String.fromCharArray(this.charBuffer, this.charPos, ((i - this.charPos) | 0));
+                            }
+                            this.charPos = (i + 1) | 0;
+                            if (ch === 13 && (this.charPos < this.charLen || this.ReadBuffer() > 0)) {
+                                if (this.charBuffer[System.Array.index(this.charPos, this.charBuffer)] === 10) {
+                                    this.charPos = (this.charPos + 1) | 0;
+                                }
+                            }
+                            return s;
+                        }
+                        i = (i + 1) | 0;
+                    } while (i < this.charLen);
+                    i = (this.charLen - this.charPos) | 0;
+                    if (sb == null) {
+                        sb = new System.Text.StringBuilder("", ((i + 80) | 0));
+                    }
+                    sb.append(System.String.fromCharArray(this.charBuffer, this.charPos, i));
+                } while (this.ReadBuffer() > 0);
+                return sb.toString();
+            }
+        }
+    });
+
+    Bridge.define("System.IO.StreamWriter", {
+        inherits: [System.IO.TextWriter],
+        statics: {
+            fields: {
+                DefaultBufferSize: 0,
+                DefaultFileStreamBufferSize: 0,
+                MinBufferSize: 0,
+                Null: null,
+                _UTF8NoBOM: null
+            },
+            props: {
+                UTF8NoBOM: {
+                    get: function () {
+                        if (System.IO.StreamWriter._UTF8NoBOM == null) {
+                            // No need for double lock - we just want to avoid extra
+                            // allocations in the common case.
+                            var noBOM = new System.Text.UTF8Encoding.$ctor2(false, true);
+                            System.IO.StreamWriter._UTF8NoBOM = noBOM;
+                        }
+                        return System.IO.StreamWriter._UTF8NoBOM;
+                    }
+                }
+            },
+            ctors: {
+                init: function () {
+                    this.DefaultBufferSize = 1024;
+                    this.DefaultFileStreamBufferSize = 4096;
+                    this.MinBufferSize = 128;
+                    this.Null = new System.IO.StreamWriter.$ctor4(System.IO.Stream.Null, new System.Text.UTF8Encoding.$ctor2(false, true), System.IO.StreamWriter.MinBufferSize, true);
+                }
+            }
+        },
+        fields: {
+            stream: null,
+            encoding: null,
+            byteBuffer: null,
+            charBuffer: null,
+            charPos: 0,
+            charLen: 0,
+            autoFlush: false,
+            haveWrittenPreamble: false,
+            closable: false
+        },
+        props: {
+            AutoFlush: {
+                get: function () {
+                    return this.autoFlush;
+                },
+                set: function (value) {
+                    this.autoFlush = value;
+                    if (value) {
+                        this.Flush$1(true, false);
+                    }
+                }
+            },
+            BaseStream: {
+                get: function () {
+                    return this.stream;
+                }
+            },
+            LeaveOpen: {
+                get: function () {
+                    return !this.closable;
+                }
+            },
+            HaveWrittenPreamble: {
+                set: function (value) {
+                    this.haveWrittenPreamble = value;
+                }
+            },
+            Encoding: {
+                get: function () {
+                    return this.encoding;
+                }
+            }
+        },
+        ctors: {
+            ctor: function () {
+                this.$initialize();
+                System.IO.TextWriter.$ctor1.call(this, null); // Ask for CurrentCulture all the time
+            },
+            $ctor1: function (stream) {
+                System.IO.StreamWriter.$ctor4.call(this, stream, System.IO.StreamWriter.UTF8NoBOM, System.IO.StreamWriter.DefaultBufferSize, false);
+            },
+            $ctor2: function (stream, encoding) {
+                System.IO.StreamWriter.$ctor4.call(this, stream, encoding, System.IO.StreamWriter.DefaultBufferSize, false);
+            },
+            $ctor3: function (stream, encoding, bufferSize) {
+                System.IO.StreamWriter.$ctor4.call(this, stream, encoding, bufferSize, false);
+            },
+            $ctor4: function (stream, encoding, bufferSize, leaveOpen) {
+                this.$initialize();
+                System.IO.TextWriter.$ctor1.call(this, null);
+                if (stream == null || encoding == null) {
+                    throw new System.ArgumentNullException((stream == null ? "stream" : "encoding"));
+                }
+                if (!stream.CanWrite) {
+                    throw new System.ArgumentException("Argument_StreamNotWritable");
+                }
+                if (bufferSize <= 0) {
+                    throw new System.ArgumentOutOfRangeException("bufferSize", "ArgumentOutOfRange_NeedPosNum");
+                }
+
+                this.Init(stream, encoding, bufferSize, leaveOpen);
+            },
+            $ctor5: function (path) {
+                System.IO.StreamWriter.$ctor8.call(this, path, false, System.IO.StreamWriter.UTF8NoBOM, System.IO.StreamWriter.DefaultBufferSize);
+            },
+            $ctor6: function (path, append) {
+                System.IO.StreamWriter.$ctor8.call(this, path, append, System.IO.StreamWriter.UTF8NoBOM, System.IO.StreamWriter.DefaultBufferSize);
+            },
+            $ctor7: function (path, append, encoding) {
+                System.IO.StreamWriter.$ctor8.call(this, path, append, encoding, System.IO.StreamWriter.DefaultBufferSize);
+            },
+            $ctor8: function (path, append, encoding, bufferSize) {
+                System.IO.StreamWriter.$ctor9.call(this, path, append, encoding, bufferSize, true);
+            },
+            $ctor9: function (path, append, encoding, bufferSize, checkHost) {
+                this.$initialize();
+                System.IO.TextWriter.$ctor1.call(this, null);
+                throw new System.NotSupportedException();
+            }
+        },
+        methods: {
+            Init: function (streamArg, encodingArg, bufferSize, shouldLeaveOpen) {
+                this.stream = streamArg;
+                this.encoding = encodingArg;
+                if (bufferSize < System.IO.StreamWriter.MinBufferSize) {
+                    bufferSize = System.IO.StreamWriter.MinBufferSize;
+                }
+                this.charBuffer = System.Array.init(bufferSize, 0, System.Char);
+                this.byteBuffer = System.Array.init(this.encoding.GetMaxByteCount(bufferSize), 0, System.Byte);
+                this.charLen = bufferSize;
+                // If we're appending to a Stream that already has data, don't write
+                // the preamble.
+                if (this.stream.CanSeek && this.stream.Position.gt(System.Int64(0))) {
+                    this.haveWrittenPreamble = true;
+                }
+                this.closable = !shouldLeaveOpen;
+            },
+            Close: function () {
+                this.Dispose$1(true);
+            },
+            Dispose$1: function (disposing) {
+                try {
+                    // We need to flush any buffered data if we are being closed/disposed.
+                    // Also, we never close the handles for stdout & friends.  So we can safely
+                    // write any buffered data to those streams even during finalization, which
+                    // is generally the right thing to do.
+                    if (this.stream != null) {
+                        // Note: flush on the underlying stream can throw (ex., low disk space)
+                        if (disposing) {
+                            this.Flush$1(true, true);
+                        }
+                    }
+                }
+                finally {
+                    // Dispose of our resources if this StreamWriter is closable.
+                    // Note: Console.Out and other such non closable streamwriters should be left alone
+                    if (!this.LeaveOpen && this.stream != null) {
+                        try {
+                            // Attempt to close the stream even if there was an IO error from Flushing.
+                            // Note that Stream.Close() can potentially throw here (may or may not be
+                            // due to the same Flush error). In this case, we still need to ensure
+                            // cleaning up internal resources, hence the finally block.
+                            if (disposing) {
+                                this.stream.Close();
+                            }
+                        }
+                        finally {
+                            this.stream = null;
+                            this.byteBuffer = null;
+                            this.charBuffer = null;
+                            this.encoding = null;
+                            this.charLen = 0;
+                            System.IO.TextWriter.prototype.Dispose$1.call(this, disposing);
+                        }
+                    }
+                }
+            },
+            Flush: function () {
+                this.Flush$1(true, true);
+            },
+            Flush$1: function (flushStream, flushEncoder) {
+                // flushEncoder should be true at the end of the file and if
+                // the user explicitly calls Flush (though not if AutoFlush is true).
+                // This is required to flush any dangling characters from our UTF-7
+                // and UTF-8 encoders.
+                if (this.stream == null) {
+                    System.IO.__Error.WriterClosed();
+                }
+
+                // Perf boost for Flush on non-dirty writers.
+                if (this.charPos === 0 && (!flushStream && !flushEncoder)) {
+                    return;
+                }
+
+                /* if (!haveWrittenPreamble) {
+                   haveWrittenPreamble = true;
+                   byte[] preamble = encoding.GetPreamble();
+                   if (preamble.Length > 0)
+                       stream.Write(preamble, 0, preamble.Length);
+                }*/
+
+                var count = this.encoding.GetBytes$3(this.charBuffer, 0, this.charPos, this.byteBuffer, 0);
+                this.charPos = 0;
+                if (count > 0) {
+                    this.stream.Write(this.byteBuffer, 0, count);
+                }
+                // By definition, calling Flush should flush the stream, but this is
+                // only necessary if we passed in true for flushStream.  The Web
+                // Services guys have some perf tests where flushing needlessly hurts.
+                if (flushStream) {
+                    this.stream.Flush();
+                }
+            },
+            Write$1: function (value) {
+                if (this.charPos === this.charLen) {
+                    this.Flush$1(false, false);
+                }
+                this.charBuffer[System.Array.index(this.charPos, this.charBuffer)] = value;
+                this.charPos = (this.charPos + 1) | 0;
+                if (this.autoFlush) {
+                    this.Flush$1(true, false);
+                }
+            },
+            Write$2: function (buffer) {
+                // This may be faster than the one with the index & count since it
+                // has to do less argument checking.
+                if (buffer == null) {
+                    return;
+                }
+
+                var index = 0;
+                var count = buffer.length;
+                while (count > 0) {
+                    if (this.charPos === this.charLen) {
+                        this.Flush$1(false, false);
+                    }
+                    var n = (this.charLen - this.charPos) | 0;
+                    if (n > count) {
+                        n = count;
+                    }
+                    System.Array.copy(buffer, index, this.charBuffer, this.charPos, n);
+                    this.charPos = (this.charPos + n) | 0;
+                    index = (index + n) | 0;
+                    count = (count - n) | 0;
+                }
+                if (this.autoFlush) {
+                    this.Flush$1(true, false);
+                }
+            },
+            Write$3: function (buffer, index, count) {
+                if (buffer == null) {
+                    throw new System.ArgumentNullException("buffer", "ArgumentNull_Buffer");
+                }
+                if (index < 0) {
+                    throw new System.ArgumentOutOfRangeException("index", "ArgumentOutOfRange_NeedNonNegNum");
+                }
+                if (count < 0) {
+                    throw new System.ArgumentOutOfRangeException("count", "ArgumentOutOfRange_NeedNonNegNum");
+                }
+                if (((buffer.length - index) | 0) < count) {
+                    throw new System.ArgumentException("Argument_InvalidOffLen");
+                }
+
+                while (count > 0) {
+                    if (this.charPos === this.charLen) {
+                        this.Flush$1(false, false);
+                    }
+                    var n = (this.charLen - this.charPos) | 0;
+                    if (n > count) {
+                        n = count;
+                    }
+                    System.Array.copy(buffer, index, this.charBuffer, this.charPos, n);
+                    this.charPos = (this.charPos + n) | 0;
+                    index = (index + n) | 0;
+                    count = (count - n) | 0;
+                }
+                if (this.autoFlush) {
+                    this.Flush$1(true, false);
+                }
+            },
+            Write$10: function (value) {
+                if (value != null) {
+                    var count = value.length;
+                    var index = 0;
+                    while (count > 0) {
+                        if (this.charPos === this.charLen) {
+                            this.Flush$1(false, false);
+                        }
+                        var n = (this.charLen - this.charPos) | 0;
+                        if (n > count) {
+                            n = count;
+                        }
+                        System.String.copyTo(value, index, this.charBuffer, this.charPos, n);
+                        this.charPos = (this.charPos + n) | 0;
+                        index = (index + n) | 0;
+                        count = (count - n) | 0;
+                    }
+                    if (this.autoFlush) {
+                        this.Flush$1(true, false);
+                    }
+                }
+            }
+        }
+    });
+
+    Bridge.define("System.IO.StringReader", {
+        inherits: [System.IO.TextReader],
+        fields: {
+            _s: null,
+            _pos: 0,
+            _length: 0
+        },
+        ctors: {
+            ctor: function (s) {
+                this.$initialize();
+                System.IO.TextReader.ctor.call(this);
+                if (s == null) {
+                    throw new System.ArgumentNullException("s");
+                }
+                this._s = s;
+                this._length = s == null ? 0 : s.length;
+            }
+        },
+        methods: {
+            Close: function () {
+                this.Dispose$1(true);
+            },
+            Dispose$1: function (disposing) {
+                this._s = null;
+                this._pos = 0;
+                this._length = 0;
+                System.IO.TextReader.prototype.Dispose$1.call(this, disposing);
+            },
+            Peek: function () {
+                if (this._s == null) {
+                    System.IO.__Error.ReaderClosed();
+                }
+                if (this._pos === this._length) {
+                    return -1;
+                }
+                return this._s.charCodeAt(this._pos);
+            },
+            Read: function () {
+                if (this._s == null) {
+                    System.IO.__Error.ReaderClosed();
+                }
+                if (this._pos === this._length) {
+                    return -1;
+                }
+                return this._s.charCodeAt(Bridge.identity(this._pos, (this._pos = (this._pos + 1) | 0)));
+            },
+            Read$1: function (buffer, index, count) {
+                if (buffer == null) {
+                    throw new System.ArgumentNullException("buffer");
+                }
+                if (index < 0) {
+                    throw new System.ArgumentOutOfRangeException("index");
+                }
+                if (count < 0) {
+                    throw new System.ArgumentOutOfRangeException("count");
+                }
+                if (((buffer.length - index) | 0) < count) {
+                    throw new System.ArgumentException();
+                }
+                if (this._s == null) {
+                    System.IO.__Error.ReaderClosed();
+                }
+
+                var n = (this._length - this._pos) | 0;
+                if (n > 0) {
+                    if (n > count) {
+                        n = count;
+                    }
+                    System.String.copyTo(this._s, this._pos, buffer, index, n);
+                    this._pos = (this._pos + n) | 0;
+                }
+                return n;
+            },
+            ReadToEnd: function () {
+                if (this._s == null) {
+                    System.IO.__Error.ReaderClosed();
+                }
+                var s;
+                if (this._pos === 0) {
+                    s = this._s;
+                } else {
+                    s = this._s.substr(this._pos, ((this._length - this._pos) | 0));
+                }
+                this._pos = this._length;
+                return s;
+            },
+            ReadLine: function () {
+                if (this._s == null) {
+                    System.IO.__Error.ReaderClosed();
+                }
+                var i = this._pos;
+                while (i < this._length) {
+                    var ch = this._s.charCodeAt(i);
+                    if (ch === 13 || ch === 10) {
+                        var result = this._s.substr(this._pos, ((i - this._pos) | 0));
+                        this._pos = (i + 1) | 0;
+                        if (ch === 13 && this._pos < this._length && this._s.charCodeAt(this._pos) === 10) {
+                            this._pos = (this._pos + 1) | 0;
+                        }
+                        return result;
+                    }
+                    i = (i + 1) | 0;
+                }
+                if (i > this._pos) {
+                    var result1 = this._s.substr(this._pos, ((i - this._pos) | 0));
+                    this._pos = i;
+                    return result1;
+                }
+                return null;
+            }
+        }
+    });
+
+    Bridge.define("System.IO.StringWriter", {
+        inherits: [System.IO.TextWriter],
+        statics: {
+            fields: {
+                m_encoding: null
+            }
+        },
+        fields: {
+            _sb: null,
+            _isOpen: false
+        },
+        props: {
+            Encoding: {
+                get: function () {
+                    if (System.IO.StringWriter.m_encoding == null) {
+                        System.IO.StringWriter.m_encoding = new System.Text.UnicodeEncoding.$ctor1(false, false);
+                    }
+                    return System.IO.StringWriter.m_encoding;
+                }
+            }
+        },
+        ctors: {
+            ctor: function () {
+                System.IO.StringWriter.$ctor3.call(this, new System.Text.StringBuilder(), System.Globalization.CultureInfo.getCurrentCulture());
+            },
+            $ctor1: function (formatProvider) {
+                System.IO.StringWriter.$ctor3.call(this, new System.Text.StringBuilder(), formatProvider);
+            },
+            $ctor2: function (sb) {
+                System.IO.StringWriter.$ctor3.call(this, sb, System.Globalization.CultureInfo.getCurrentCulture());
+            },
+            $ctor3: function (sb, formatProvider) {
+                this.$initialize();
+                System.IO.TextWriter.$ctor1.call(this, formatProvider);
+                if (sb == null) {
+                    throw new System.ArgumentNullException("sb");
+                }
+                this._sb = sb;
+                this._isOpen = true;
+            }
+        },
+        methods: {
+            Close: function () {
+                this.Dispose$1(true);
+            },
+            Dispose$1: function (disposing) {
+                // Do not destroy _sb, so that we can extract this after we are
+                // done writing (similar to MemoryStream's GetBuffer & ToArray methods)
+                this._isOpen = false;
+                System.IO.TextWriter.prototype.Dispose$1.call(this, disposing);
+            },
+            GetStringBuilder: function () {
+                return this._sb;
+            },
+            Write$1: function (value) {
+                if (!this._isOpen) {
+                    System.IO.__Error.WriterClosed();
+                }
+                this._sb.append(String.fromCharCode(value));
+            },
+            Write$3: function (buffer, index, count) {
+                if (buffer == null) {
+                    throw new System.ArgumentNullException("buffer");
+                }
+                if (index < 0) {
+                    throw new System.ArgumentOutOfRangeException("index");
+                }
+                if (count < 0) {
+                    throw new System.ArgumentOutOfRangeException("count");
+                }
+                if (((buffer.length - index) | 0) < count) {
+                    throw new System.ArgumentException();
+                }
+
+                if (!this._isOpen) {
+                    System.IO.__Error.WriterClosed();
+                }
+
+                this._sb.append(System.String.fromCharArray(buffer, index, count));
+            },
+            Write$10: function (value) {
+                if (!this._isOpen) {
+                    System.IO.__Error.WriterClosed();
+                }
+                if (value != null) {
+                    this._sb.append(value);
+                }
+            },
+            toString: function () {
+                return this._sb.toString();
+            }
+        }
+    });
+
+    Bridge.define("System.IO.TextReader.NullTextReader", {
+        inherits: [System.IO.TextReader],
+        ctors: {
+            ctor: function () {
+                this.$initialize();
+                System.IO.TextReader.ctor.call(this);
+            }
+        },
+        methods: {
+            Read$1: function (buffer, index, count) {
+                return 0;
+            },
+            ReadLine: function () {
+                return null;
+            }
+        }
+    });
+
+    Bridge.define("System.IO.TextWriter.NullTextWriter", {
+        inherits: [System.IO.TextWriter],
+        props: {
+            Encoding: {
+                get: function () {
+                    return System.Text.Encoding.Default;
+                }
+            }
+        },
+        ctors: {
+            ctor: function () {
+                this.$initialize();
+                System.IO.TextWriter.$ctor1.call(this, System.Globalization.CultureInfo.invariantCulture);
+            }
+        },
+        methods: {
+            Write$3: function (buffer, index, count) { },
+            Write$10: function (value) { },
+            WriteLine: function () { },
+            WriteLine$11: function (value) { },
+            WriteLine$9: function (value) { }
+        }
+    });
+
+    Bridge.define("System.IO.StreamReader.NullStreamReader", {
+        inherits: [System.IO.StreamReader],
+        props: {
+            BaseStream: {
+                get: function () {
+                    return System.IO.Stream.Null;
+                }
+            },
+            CurrentEncoding: {
+                get: function () {
+                    return System.Text.Encoding.Unicode;
+                }
+            }
+        },
+        ctors: {
+            ctor: function () {
+                this.$initialize();
+                System.IO.StreamReader.ctor.call(this);
+                this.Init(System.IO.Stream.Null);
+            }
+        },
+        methods: {
+            Dispose$1: function (disposing) {
+                // Do nothing - this is essentially unclosable.
+            },
+            Peek: function () {
+                return -1;
+            },
+            Read: function () {
+                return -1;
+            },
+            Read$1: function (buffer, index, count) {
+                return 0;
+            },
+            ReadLine: function () {
+                return null;
+            },
+            ReadToEnd: function () {
+                return "";
+            },
+            ReadBuffer: function () {
+                return 0;
+            }
+        }
+    });
+
     // @source random.js
 
     Bridge.define("System.Random", {
@@ -26167,7 +33241,7 @@ Bridge.define("System.Text.RegularExpressions.RegexParser", {
                     }
 
                     // We don't need the last '-' character
-                    return String.fromCharCode.apply(null, chArray.slice(0, 0 + ((chArray.length - 1) | 0)));
+                    return System.String.fromCharArray(chArray, 0, ((chArray.length - 1) | 0));
                 },
                 toString: function (value) {
                     if (value == null) {
@@ -26481,7 +33555,7 @@ Bridge.define("System.Text.RegularExpressions.RegexParser", {
                         }
 
                         for (var i = index; i < ((index + count) | 0); i = (i + 1) | 0) {
-                            s = System.String.concat(s, String.fromCharCode(buffer[System.Array.index(i, buffer)]));
+                            s = (s || "") + String.fromCharCode(buffer[System.Array.index(i, buffer)]);
                         }
                     }
 
@@ -26613,7 +33687,7 @@ Bridge.define("System.Text.RegularExpressions.RegexParser", {
                 // m_length is of type int32 and is exposed as a property, so
                 // type of m_length can't be changed to accommodate.
                 if (bytes.length > 268435455) {
-                    throw new System.ArgumentException(System.String.format("The input array length must not exceed Int32.MaxValue / {0}. Otherwise BitArray.Length would exceed Int32.MaxValue.", Bridge.box(System.Collections.BitArray.BitsPerByte, System.Int32)), "bytes");
+                    throw new System.ArgumentException(System.String.format("The input array length must not exceed Int32.MaxValue / {0}. Otherwise BitArray.Length would exceed Int32.MaxValue.", [Bridge.box(System.Collections.BitArray.BitsPerByte, System.Int32)]), "bytes");
                 }
 
                 this.m_array = System.Array.init(System.Collections.BitArray.getArrayLength(bytes.length, System.Collections.BitArray.BytesPerInt32), 0, System.Int32);
@@ -26644,6 +33718,7 @@ Bridge.define("System.Text.RegularExpressions.RegexParser", {
                 this._version = 0;
             },
             ctor: function (values) {
+                var $t;
                 this.$initialize();
                 if (values == null) {
                     throw new System.ArgumentNullException("values");
@@ -26654,7 +33729,7 @@ Bridge.define("System.Text.RegularExpressions.RegexParser", {
 
                 for (var i = 0; i < values.length; i = (i + 1) | 0) {
                     if (values[System.Array.index(i, values)]) {
-                        this.m_array[System.Array.index(((Bridge.Int.div(i, 32)) | 0), this.m_array)] = this.m_array[System.Array.index(((Bridge.Int.div(i, 32)) | 0), this.m_array)] | (1 << (i % 32));
+                        this.m_array[System.Array.index(($t = ((Bridge.Int.div(i, 32)) | 0)), this.m_array)] = this.m_array[System.Array.index($t, this.m_array)] | (1 << (i % 32));
                     }
                 }
 
@@ -26667,7 +33742,7 @@ Bridge.define("System.Text.RegularExpressions.RegexParser", {
                 }
                 // this value is chosen to prevent overflow when computing m_length
                 if (values.length > 67108863) {
-                    throw new System.ArgumentException(System.String.format("The input array length must not exceed Int32.MaxValue / {0}. Otherwise BitArray.Length would exceed Int32.MaxValue.", Bridge.box(System.Collections.BitArray.BitsPerInt32, System.Int32)), "values");
+                    throw new System.ArgumentException(System.String.format("The input array length must not exceed Int32.MaxValue / {0}. Otherwise BitArray.Length would exceed Int32.MaxValue.", [Bridge.box(System.Collections.BitArray.BitsPerInt32, System.Int32)]), "values");
                 }
 
                 this.m_array = System.Array.init(values.length, 0, System.Int32);
@@ -26745,14 +33820,15 @@ Bridge.define("System.Text.RegularExpressions.RegexParser", {
                 return (this.m_array[System.Array.index(((Bridge.Int.div(index, 32)) | 0), this.m_array)] & (1 << (index % 32))) !== 0;
             },
             set: function (index, value) {
+                var $t, $t1;
                 if (index < 0 || index >= this.Length) {
                     throw new System.ArgumentOutOfRangeException("index", "Index was out of range. Must be non-negative and less than the size of the collection.");
                 }
 
                 if (value) {
-                    this.m_array[System.Array.index(((Bridge.Int.div(index, 32)) | 0), this.m_array)] = this.m_array[System.Array.index(((Bridge.Int.div(index, 32)) | 0), this.m_array)] | (1 << (index % 32));
+                    this.m_array[System.Array.index(($t = ((Bridge.Int.div(index, 32)) | 0)), this.m_array)] = this.m_array[System.Array.index($t, this.m_array)] | (1 << (index % 32));
                 } else {
-                    this.m_array[System.Array.index(((Bridge.Int.div(index, 32)) | 0), this.m_array)] = this.m_array[System.Array.index(((Bridge.Int.div(index, 32)) | 0), this.m_array)] & (~(1 << (index % 32)));
+                    this.m_array[System.Array.index(($t1 = ((Bridge.Int.div(index, 32)) | 0)), this.m_array)] = this.m_array[System.Array.index($t1, this.m_array)] & (~(1 << (index % 32)));
                 }
 
                 this._version = (this._version + 1) | 0;
@@ -28793,6 +35869,107 @@ Bridge.define("System.Text.RegularExpressions.RegexParser", {
                     }
                     return System.Collections.HashHelpers.getPrime(newSize);
                 }
+            }
+        }
+    });
+
+    // @source browsableAttribute.js
+
+    Bridge.define("System.ComponentModel.BrowsableAttribute", {
+        inherits: [System.Attribute],
+        statics: {
+            fields: {
+                yes: null,
+                no: null,
+                default: null
+            },
+            ctors: {
+                init: function () {
+                    this.yes = new System.ComponentModel.BrowsableAttribute(true);
+                    this.no = new System.ComponentModel.BrowsableAttribute(false);
+                    this.default = System.ComponentModel.BrowsableAttribute.yes;
+                }
+            }
+        },
+        fields: {
+            browsable: false
+        },
+        props: {
+            Browsable: {
+                get: function () {
+                    return this.browsable;
+                }
+            }
+        },
+        ctors: {
+            init: function () {
+                this.browsable = true;
+            },
+            ctor: function (browsable) {
+                this.$initialize();
+                System.Attribute.ctor.call(this);
+                this.browsable = browsable;
+            }
+        },
+        methods: {
+            equals: function (obj) {
+                if (Bridge.referenceEquals(obj, this)) {
+                    return true;
+                }
+
+                var other = Bridge.as(obj, System.ComponentModel.BrowsableAttribute);
+
+                return (other != null) && other.Browsable === this.browsable;
+            },
+            getHashCode: function () {
+                return Bridge.getHashCode(this.browsable);
+            }
+        }
+    });
+
+    // @source defaultValueAttribute.js
+
+    Bridge.define("System.ComponentModel.DefaultValueAttribute", {
+        inherits: [System.Attribute],
+        fields: {
+            value: null
+        },
+        props: {
+            Value: {
+                get: function () {
+                    return this.value;
+                }
+            }
+        },
+        ctors: {
+            ctor: function (value) {
+                this.$initialize();
+                System.Attribute.ctor.call(this);
+                this.value = value;
+            }
+        },
+        methods: {
+            equals: function (obj) {
+                if (Bridge.referenceEquals(obj, this)) {
+                    return true;
+                }
+
+                var other = Bridge.as(obj, System.ComponentModel.DefaultValueAttribute);
+
+                if (other != null) {
+                    if (this.Value != null) {
+                        return Bridge.equals(this.Value, other.Value);
+                    } else {
+                        return (other.Value == null);
+                    }
+                }
+                return false;
+            },
+            getHashCode: function () {
+                return Bridge.getHashCode(this);
+            },
+            setValue: function (value) {
+                this.value = value;
             }
         }
     });

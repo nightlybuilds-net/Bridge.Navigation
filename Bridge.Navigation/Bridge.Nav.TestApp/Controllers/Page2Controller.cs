@@ -1,7 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using Bridge.Html5;
-using Bridge.Navigation.Abstraction;
+using Bridge.Navigation;
 
 namespace Bridge.Nav.TestApp.Controllers
 {

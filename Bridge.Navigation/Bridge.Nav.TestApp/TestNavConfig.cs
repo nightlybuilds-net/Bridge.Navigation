@@ -1,8 +1,7 @@
 ﻿using System.Collections.Generic;
 using Bridge.jQuery2;
 using Bridge.Nav.TestApp.Controllers;
-using Bridge.Navigation.Abstraction;
-using Bridge.Navigation.Impl;
+using Bridge.Navigation;
 
 namespace Bridge.Nav.TestApp
 {

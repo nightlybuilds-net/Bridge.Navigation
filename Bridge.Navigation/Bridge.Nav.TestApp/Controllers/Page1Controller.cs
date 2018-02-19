@@ -1,6 +1,6 @@
 ﻿using System.Collections.Generic;
 using Bridge.jQuery2;
-using Bridge.Navigation.Abstraction;
+using Bridge.Navigation;
 using Bridge.Utils;
 
 namespace Bridge.Nav.TestApp.Controllers
