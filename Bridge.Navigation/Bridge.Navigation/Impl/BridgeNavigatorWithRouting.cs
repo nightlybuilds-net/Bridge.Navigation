@@ -4,7 +4,6 @@ using Bridge.Html5;
 
 namespace Bridge.Navigation
 {
-    [Reflectable]
     public class BridgeNavigatorWithRouting : BridgeNavigator
     {
 

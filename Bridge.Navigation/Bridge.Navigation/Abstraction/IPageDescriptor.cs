@@ -38,5 +38,11 @@ namespace Bridge.Navigation
         /// Return the KEY of a new page descriptor.
         /// </summary>
         Func<string> RedirectRules { get; set; }
+
+        /// <summary>
+        /// Automatic enable spaf anchors on load.
+        /// Default is True
+        /// </summary>
+        Func<bool> AutoEnableSpafAnchors { get; set; }
     }
 }
