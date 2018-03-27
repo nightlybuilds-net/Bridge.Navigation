@@ -8,7 +8,6 @@ namespace Bridge.Navigation
     /// <summary>
     /// INavigator implementation
     /// </summary>
-    [Reflectable]
     public class BridgeNavigator : INavigator
     {
         private static IAmLoadable _actualController;
@@ -72,6 +71,11 @@ namespace Bridge.Navigation
             {
                 // prepare page
                 page.PreparePage?.Invoke();
+
+                // auto enable spaf anchors
+                var enableAnchors = page.AutoEnableSpafAnchors?.Invoke();
+                if(enableAnchors.HasValue && enableAnchors.Value)
+                    this.EnableSpafAnchors();
 
                 if (page.PageController != null)
                 {

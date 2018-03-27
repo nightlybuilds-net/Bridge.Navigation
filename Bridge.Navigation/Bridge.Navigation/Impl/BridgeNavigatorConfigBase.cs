@@ -8,7 +8,6 @@ namespace Bridge.Navigation
     /// <summary>
     /// INavigatorConfigurator Implementation. Must be extended.
     /// </summary>
-    [Reflectable]
     public abstract class BridgeNavigatorConfigBase : INavigatorConfigurator
     {
         private readonly IList<IPageDescriptor> _routes;
