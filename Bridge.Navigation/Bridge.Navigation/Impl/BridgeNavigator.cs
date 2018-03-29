@@ -21,6 +21,7 @@ namespace Bridge.Navigation
         public void EnableSpafAnchors()
         {
             var allAnchors = jQuery.Select("a");
+            allAnchors.Off(EventType.Click.ToString());
             allAnchors.Click(ev =>
             {
                 var clickedElement = ev.Target;
@@ -41,6 +42,7 @@ namespace Bridge.Navigation
                     var pageId = href.Replace("spaf:", "");
                     this.Navigate(pageId);
                 }
+
                 // anchor default behaviour
             });
         }
