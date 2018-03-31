@@ -82,7 +82,6 @@ namespace Bridge.Navigation
                         this.EnableSpafAnchors();
                 }
 
-
                 if (page.PageController != null)
                 {
                     // leave actual controlelr
