@@ -7,16 +7,24 @@ namespace Bridge.Navigation
     public static class NavigationUtility
     {
         /// <summary>
+        /// Define virtual directory for something like:
+        /// protocol://awesomesite.io/somedirectory
+        /// </summary>
+        public static string VirtualDirectory = null;
+
+        
+        /// <summary>
         /// Push state on history
         /// </summary>
         /// <param name="pageId"></param>
         /// <param name="parameters"></param>
         public static void PushState(string pageId, Dictionary<string, object> parameters = null)
         {
+            var baseUrl = BuildBaseUrl(pageId);
+
             Window.History.PushState(null, string.Empty,
                 parameters != null
-                    ? $"{Window.Location.Protocol}//{Window.Location.Host}#{pageId}={Global.Btoa(JSON.Stringify(parameters))}"
-                    : $"{Window.Location.Protocol}//{Window.Location.Host}#{pageId}");
+                    ? $"{baseUrl}={Global.Btoa(JSON.Stringify(parameters))}" : baseUrl);
         }
 
         /// <summary>
@@ -26,10 +34,7 @@ namespace Bridge.Navigation
         /// <param name="parameters"></param>
         public static void ReplaceState(string pageId, Dictionary<string, object> parameters = null)
         {
-            Window.History.PushState(null, string.Empty,
-                parameters != null
-                    ? $"{Window.Location.Protocol}//{Window.Location.Host}#{pageId}={Global.Btoa(JSON.Stringify(parameters))}"
-                    : $"{Window.Location.Protocol}//{Window.Location.Host}#{pageId}");
+            PushState(pageId,parameters);
         }
 
         /// <summary>
@@ -49,6 +54,20 @@ namespace Bridge.Navigation
 
             var value = parameters[paramKey];
             return (T)value;
+        }
+        
+        /// <summary>
+        /// Build base url using page id and virtual directory
+        /// </summary>
+        /// <param name="pageId"></param>
+        /// <returns></returns>
+        private static string BuildBaseUrl(string pageId)
+        {
+            var baseUrl = $"{Window.Location.Protocol}//{Window.Location.Host}";
+            baseUrl = string.IsNullOrEmpty(VirtualDirectory)
+                ? $"{baseUrl}#{pageId}"
+                : $"{baseUrl}/{VirtualDirectory}#{pageId}";
+            return baseUrl;
         }
     }
 }
