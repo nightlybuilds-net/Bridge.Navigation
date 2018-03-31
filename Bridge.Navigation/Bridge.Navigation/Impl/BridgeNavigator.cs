@@ -75,9 +75,12 @@ namespace Bridge.Navigation
                 page.PreparePage?.Invoke();
 
                 // auto enable spaf anchors
-                var enableAnchors = page.AutoEnableSpafAnchors?.Invoke();
-                if(enableAnchors.HasValue && enableAnchors.Value)
-                    this.EnableSpafAnchors();
+                if (!this.Configuration.DisableAutoSpafAnchorsOnNavigate)
+                {
+                    var enableAnchors = page.AutoEnableSpafAnchors?.Invoke();
+                    if(enableAnchors.HasValue && enableAnchors.Value)
+                        this.EnableSpafAnchors();
+                }
 
                 if (page.PageController != null)
                 {

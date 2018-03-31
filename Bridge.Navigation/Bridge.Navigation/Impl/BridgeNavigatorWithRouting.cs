@@ -22,8 +22,8 @@ namespace Bridge.Navigation
         }
         public override void Navigate(string pageId, Dictionary<string, object> parameters = null)
         {
-            base.Navigate(pageId, parameters);
             NavigationUtility.PushState(pageId,parameters);
+            base.Navigate(pageId, parameters);
         }
 
         public override void InitNavigation()

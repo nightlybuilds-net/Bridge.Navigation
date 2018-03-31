@@ -27,5 +27,11 @@ namespace Bridge.Navigation
         /// <param name="key"></param>
         /// <returns></returns>
         IPageDescriptor GetPageDescriptorByKey(string key);
+        
+        
+        /// <summary>
+        /// Disable auto enable spaf anchors on navigate
+        /// </summary>
+        bool DisableAutoSpafAnchorsOnNavigate { get; }
     }
 }
