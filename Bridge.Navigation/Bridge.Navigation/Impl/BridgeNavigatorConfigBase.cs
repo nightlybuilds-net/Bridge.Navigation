@@ -15,6 +15,8 @@ namespace Bridge.Navigation
         public abstract IList<IPageDescriptor> CreateRoutes();
         public abstract jQuery Body { get; }
         public abstract string HomeId { get; }
+        public abstract bool DisableAutoSpafAnchorsOnNavigate { get; }
+
 
 
         protected BridgeNavigatorConfigBase()
@@ -26,6 +28,6 @@ namespace Bridge.Navigation
         {
             return this._routes.SingleOrDefault(s=> string.Equals(s.Key, key, StringComparison.CurrentCultureIgnoreCase));
         }
-      
+
     }
 }
