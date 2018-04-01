@@ -93,11 +93,14 @@ namespace Bridge.Navigation
                     controller.OnLoad(parameters);
 
                     _actualController = controller;
+                    
+                    this.OnNavigated?.Invoke(this,controller);
                 }
                 
             }); 
         }
 
+        public event EventHandler<IAmLoadable> OnNavigated;
         public IAmLoadable LastNavigateController => _actualController;
 
         /// <summary>

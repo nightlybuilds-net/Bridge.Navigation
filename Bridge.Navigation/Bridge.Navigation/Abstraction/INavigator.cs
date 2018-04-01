@@ -1,9 +1,18 @@
-﻿using System.Collections.Generic;
+﻿using System;
+using System.Collections.Generic;
 
 namespace Bridge.Navigation
 {
     public interface INavigator
     {
+        /// <summary>
+        /// Called after navigated to a ''IAmloadable controller
+        /// </summary>
+        event EventHandler<IAmLoadable> OnNavigated;
+
+        /// <summary>
+        /// Last navogted controller
+        /// </summary>
         IAmLoadable LastNavigateController { get; }
 
         /// <summary>
