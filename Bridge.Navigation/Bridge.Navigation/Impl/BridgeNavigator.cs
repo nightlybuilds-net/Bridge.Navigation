@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
+using System.Threading.Tasks;
 using Bridge.Html5;
 using Bridge.jQuery2;
 
@@ -69,8 +71,17 @@ namespace Bridge.Navigation
             if(body == null)
                 throw new Exception("Cannot find navigation body element.");
 
-            this.Configuration.Body.Load(page.HtmlLocation.Invoke(),null, (o,s,a) =>
+            this.Configuration.Body.Load(page.HtmlLocation.Invoke(),null, async (o,s,a) =>
             {
+                // load dependencies
+                if (page.DependenciesScripts != null)
+                {
+                    var scripts = page.DependenciesScripts.Invoke();
+                    var scriptsTask = scripts.Select(url => Task.FromPromise(jQuery.GetScript(url)));
+
+                    await Task.WhenAll(scriptsTask);
+                }
+                
                 // prepare page
                 page.PreparePage?.Invoke();
 
