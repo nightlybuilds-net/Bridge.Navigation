@@ -17,5 +17,6 @@ namespace Bridge.Navigation
         public Action PreparePage { get; set; }
         public Func<string> RedirectRules { get; set; }
         public Func<bool> AutoEnableSpafAnchors { get; set; }
+        public Func<IEnumerable<string>> DependenciesScripts { get; set; }
     }
 }

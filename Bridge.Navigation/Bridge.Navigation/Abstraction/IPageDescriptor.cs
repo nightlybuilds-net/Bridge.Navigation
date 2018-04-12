@@ -28,11 +28,6 @@ namespace Bridge.Navigation
         Func<bool> CanBeDirectLoad { get; set; }
 
         /// <summary>
-        /// Action for prepare page
-        /// </summary>
-        Action PreparePage { get; set; }
-        
-        /// <summary>
         /// Define redirect rule for this descriptor.
         /// If null or string empty => no redirect rules.
         /// Return the KEY of a new page descriptor.
@@ -44,5 +39,16 @@ namespace Bridge.Navigation
         /// Default is True
         /// </summary>
         Func<bool> AutoEnableSpafAnchors { get; set; }
+        
+        /// <summary>
+        /// Add list of scripts necessary for partial page
+        /// </summary>
+        Func<IEnumerable<string>> DependenciesScripts { get; set; }
+        
+        /// <summary>
+        /// Action for prepare page.
+        /// This is called AFTER dependencies script (if defined) load done
+        /// </summary>
+        Action PreparePage { get; set; }
     }
 }
