@@ -76,10 +76,15 @@ namespace Bridge.Navigation
                 // load dependencies
                 if (page.DependenciesScripts != null)
                 {
-                    var scripts = page.DependenciesScripts.Invoke();
-                    var scriptsTask = scripts.Select(url => Task.FromPromise(jQuery.GetScript(url)));
-
-                    await Task.WhenAll(scriptsTask);
+                    var scripts = (page.DependenciesScripts.Invoke()).ToList();
+                    if(page.SequentialDependenciesScriptLoad)
+                        Utility.SequentialScriptLoad(scripts);
+                    {
+                        // parallel load
+                        var scriptsTask = scripts.Select(url => Task.FromPromise(jQuery.GetScript(url)));
+                        await Task.WhenAll(scriptsTask);
+                    }
+                    
                 }
                 
                 // prepare page

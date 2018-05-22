@@ -70,4 +70,6 @@ namespace Bridge.Navigation
             return baseUrl;
         }
     }
+    
+   
 }
