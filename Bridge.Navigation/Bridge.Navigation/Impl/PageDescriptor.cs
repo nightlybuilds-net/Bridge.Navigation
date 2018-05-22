@@ -1,5 +1,8 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Linq;
+using System.Threading.Tasks;
+using Bridge.jQuery2;
 
 namespace Bridge.Navigation
 {
@@ -20,4 +23,6 @@ namespace Bridge.Navigation
         public Func<bool> AutoEnableSpafAnchors { get; set; }
         public Func<IEnumerable<string>> DependenciesScripts { get; set; }
     }
+
+    
 }

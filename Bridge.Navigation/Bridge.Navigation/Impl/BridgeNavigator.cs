@@ -76,10 +76,9 @@ namespace Bridge.Navigation
                 // load dependencies
                 if (page.DependenciesScripts != null)
                 {
-                    var scripts = page.DependenciesScripts.Invoke();
+                    var scripts = (page.DependenciesScripts.Invoke()).ToList();
                     if(page.SequentialDependenciesScriptLoad)
-                        scripts.ToList().ForEach(f=> jQuery.GetScript(f)); // sequential loda
-                    else
+                        Utility.SequentialScriptLoad(scripts);
                     {
                         // parallel load
                         var scriptsTask = scripts.Select(url => Task.FromPromise(jQuery.GetScript(url)));
