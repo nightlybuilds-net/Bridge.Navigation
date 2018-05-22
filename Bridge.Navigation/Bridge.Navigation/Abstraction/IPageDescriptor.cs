@@ -50,5 +50,10 @@ namespace Bridge.Navigation
         /// This is called AFTER dependencies script (if defined) load done
         /// </summary>
         Action PreparePage { get; set; }
+        
+        /// <summary>
+        /// If true dependenciesscript will be loaded sequentially instead then parallel
+        /// </summary>
+        bool SequentialDependenciesScriptLoad { get; set; }
     }
 }

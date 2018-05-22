@@ -15,6 +15,7 @@ namespace Bridge.Navigation
         public Func<IAmLoadable> PageController { get; set; }
         public Func<bool> CanBeDirectLoad { get; set; }
         public Action PreparePage { get; set; }
+        public bool SequentialDependenciesScriptLoad { get; set; }
         public Func<string> RedirectRules { get; set; }
         public Func<bool> AutoEnableSpafAnchors { get; set; }
         public Func<IEnumerable<string>> DependenciesScripts { get; set; }
