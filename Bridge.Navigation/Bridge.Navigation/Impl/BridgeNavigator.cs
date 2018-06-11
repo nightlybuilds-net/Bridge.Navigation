@@ -70,6 +70,10 @@ namespace Bridge.Navigation
             var body = this.Configuration.Body;
             if(body == null)
                 throw new Exception("Cannot find navigation body element.");
+            
+            // leave actual controlelr
+            if (this.LastNavigateController != null)
+                this.LastNavigateController.OnLeave();
 
             this.Configuration.Body.Load(page.HtmlLocation.Invoke(),null, async (o,s,a) =>
             {
@@ -100,10 +104,6 @@ namespace Bridge.Navigation
 
                 if (page.PageController != null)
                 {
-                    // leave actual controlelr
-                    if (this.LastNavigateController != null)
-                        this.LastNavigateController.OnLeave();
-
                     // load new controller
                     var controller = page.PageController();
                     controller.OnLoad(parameters);
