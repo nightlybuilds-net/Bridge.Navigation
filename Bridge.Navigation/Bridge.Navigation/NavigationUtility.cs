@@ -12,31 +12,7 @@ namespace Bridge.Navigation
         /// </summary>
         public static string VirtualDirectory = null;
 
-        
-        /// <summary>
-        /// Push state on history
-        /// </summary>
-        /// <param name="pageId"></param>
-        /// <param name="parameters"></param>
-        public static void PushState(string pageId, Dictionary<string, object> parameters = null)
-        {
-            var baseUrl = BuildBaseUrl(pageId);
-
-            Window.History.PushState(null, string.Empty,
-                parameters != null
-                    ? $"{baseUrl}={Global.Btoa(JSON.Stringify(parameters))}" : baseUrl);
-        }
-
-        /// <summary>
-        /// replace state on history
-        /// </summary>
-        /// <param name="pageId"></param>
-        /// <param name="parameters"></param>
-        public static void ReplaceState(string pageId, Dictionary<string, object> parameters = null)
-        {
-            PushState(pageId,parameters);
-        }
-
+       
         /// <summary>
         /// Get parameter key from parameters dictionary
         /// </summary>
@@ -53,7 +29,15 @@ namespace Bridge.Navigation
                 throw new Exception($"No parameter with key {paramKey} found!");
 
             var value = parameters[paramKey];
-            return (T)value;
+            
+            var parseMethod = typeof(T).GetMethod("Parse", new Type[] { typeof(string) } );
+
+            if (parseMethod != null)
+            {
+                return (T)parseMethod.Invoke(null, new object[] { value });
+            }
+
+            return (T) value;
         }
         
         /// <summary>
@@ -61,7 +45,7 @@ namespace Bridge.Navigation
         /// </summary>
         /// <param name="pageId"></param>
         /// <returns></returns>
-        private static string BuildBaseUrl(string pageId)
+        public static string BuildBaseUrl(string pageId)
         {
             var baseUrl = $"{Window.Location.Protocol}//{Window.Location.Host}";
             baseUrl = string.IsNullOrEmpty(VirtualDirectory)
@@ -70,6 +54,4 @@ namespace Bridge.Navigation
             return baseUrl;
         }
     }
-    
-   
 }
