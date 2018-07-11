@@ -8,6 +8,7 @@ namespace Bridge.Nav.TestApp
     class TestNavConfig : BridgeNavigatorConfigBase
     {
         public override string HomeId => "home";
+        public override bool DisableAutoSpafAnchorsOnNavigate { get; }
 
         public override IList<IPageDescriptor> CreateRoutes()
         {

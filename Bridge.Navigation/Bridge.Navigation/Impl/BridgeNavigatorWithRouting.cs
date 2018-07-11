@@ -1,17 +1,20 @@
 using System;
 using System.Collections.Generic;
 using Bridge.Html5;
+using Bridge.Navigation.Model;
 
 namespace Bridge.Navigation
 {
     public class BridgeNavigatorWithRouting : BridgeNavigator
     {
+        private readonly IBrowserHistoryManager _browserHistoryManager;
 
-        public BridgeNavigatorWithRouting(INavigatorConfigurator configuration) : base(configuration)
+        public BridgeNavigatorWithRouting(INavigatorConfigurator configuration, IBrowserHistoryManager browserHistoryManager) : base(configuration)
         {
+            _browserHistoryManager = browserHistoryManager;
             Window.OnPopState += e =>
             {
-                var urlInfo = this.ParseUrl();
+                var urlInfo = _browserHistoryManager.ParseUrl();
                 this.NavigateWithoutPushState(string.IsNullOrEmpty(urlInfo.PageId) ? configuration.HomeId : urlInfo.PageId, urlInfo.Parameters);
             };
         }
@@ -22,13 +25,13 @@ namespace Bridge.Navigation
         }
         public override void Navigate(string pageId, Dictionary<string, object> parameters = null)
         {
-            NavigationUtility.PushState(pageId,parameters);
+            _browserHistoryManager.PushState(pageId,parameters);
             base.Navigate(pageId, parameters);
         }
 
         public override void InitNavigation()
         {
-            var parsed = this.ParseUrl();
+            var parsed = _browserHistoryManager.ParseUrl();
 
             if (string.IsNullOrEmpty(parsed.PageId))
                 base.InitNavigation();
@@ -42,7 +45,7 @@ namespace Bridge.Navigation
                 // if not null and evaluation is false fallback to home
                 if (page.CanBeDirectLoad != null && !page.CanBeDirectLoad.Invoke())
                 {
-                    NavigationUtility.ReplaceState(this.Configuration.HomeId);
+                    _browserHistoryManager.PushState(this.Configuration.HomeId);
                     this.NavigateWithoutPushState(this.Configuration.HomeId);
                 }
                 else
@@ -50,43 +53,8 @@ namespace Bridge.Navigation
             }
         }
 
-        private UrlDescriptor ParseUrl()
-        {
-            var res = new UrlDescriptor();
-
-            var hash = Window.Location.Hash;
-            hash = hash.Replace("#", "");
-
-            if (string.IsNullOrEmpty(hash)) return res;
-
-            var equalIndex = hash.IndexOf('=');
-            if (equalIndex == -1)
-            {
-                res.PageId = hash;
-                return res;
-            }
-
-            res.PageId = hash.Substring(0, equalIndex);  
-
-            var doublePointsIndx = equalIndex + 1;
-            var parameters = hash.Substring(doublePointsIndx, hash.Length - doublePointsIndx);
-
-            if (string.IsNullOrEmpty(parameters)) return res; // no parameters
-
-            var decoded = Global.Atob(parameters);
-            var deserialized = JSON.Parse<Dictionary<string, object>>(decoded);
-
-            res.Parameters = deserialized;
-            
-            return res;
-        }
-
+        
      
-        class UrlDescriptor
-        {
-            public string PageId { get; set; }
-
-            public Dictionary<string, object> Parameters { get; set; }
-        }
+        
     }
 }
